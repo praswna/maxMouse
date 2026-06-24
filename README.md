@@ -40,6 +40,56 @@ required** — just run the script. Windows only.
 
 ---
 
+## Middle drag in detail (screen-space vertex move)
+
+Step by step, this is what a middle-button drag does:
+
+1. **Arm check (every 200 ms).** `mm_poll` sets `VertexMoveArmed = true` only
+   when a single Editable Poly/Mesh is in **Vertex** sub-object level with **at
+   least one vertex selected**. Otherwise it stays `false`.
+2. **Middle button down.** In the low-level hook:
+   - armed → mark the drag, **swallow the event (return 1) so the viewport does
+     not pan**, and flag a `VertexDragStart`.
+   - not armed → let it through, so the middle button **pans as normal**.
+3. **Mouse move / button up.** While dragging, moves and the final up are
+   swallowed too; the hook just records the latest cursor position.
+4. **Event streaming (10 ms timer, UI thread).** A `Forms.Timer` raises
+   `VertexDragStart / VertexDragMove / VertexDragEnd` to MAXScript (moves are
+   coalesced to the latest position), so MAXScript never runs re-entrantly
+   inside the hook.
+5. **Projection onto the screen plane** (`mmv_*` handlers):
+   - *Start:* record each selected vert's **world position**, the selection
+     **centroid**, and build a plane through the centroid **perpendicular to the
+     view direction**. Also store `offset = desktopPos − mouse.pos` to convert
+     the hook's desktop coordinates into viewport coordinates.
+   - *Move:* turn the cursor into a world ray with `mapScreenToWorldRay` and
+     intersect it with that plane. The world distance from the start
+     intersection is the **translation**; every selected vert is set to
+     `original + translation` with a live redraw. Because the plane is parallel
+     to the screen, the verts **follow the cursor 1:1** (works for both
+     perspective and orthographic views).
+   - *End:* the live edits are reverted, then re-applied inside a single
+     `with undo on` block, so the whole drag collapses into **one undo entry**
+     (`maxMouse Move Verts (screen)`).
+
+```
+middle down (verts selected) ──▶ pan suppressed
+        │  drag
+        ▼
+cursor projected onto a screen-parallel plane through the selection
+        │  selected verts move by that world delta (live)
+        ▼
+middle up ──▶ committed as a single Undo
+```
+
+**Caveats.** Movement is always **within the screen plane** (no depth move; no
+axis constraint or snapping yet). Mapping uses the **active viewport** — since
+the middle-down is swallowed, drag in the viewport that's already active (the
+one where you selected the verts). Editable Poly is solid; Editable Mesh is
+best-effort.
+
+---
+
 ## Install / run
 
 1. Keep `src/maxMouse.ms` and `src/MaxMouse_GestureHook.cs` **together** in the
