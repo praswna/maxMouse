@@ -32,11 +32,14 @@ required** — just run the script. Windows only.
 3. **Right button:** the hook tracks the flick direction, shows/highlights the
    radial menu, and on release raises `MarkingMenuSelected(index)`. MAXScript
    maps the slice index to an action.
-4. **Middle button:** MAXScript keeps the hook's `VertexMoveArmed` flag in sync
-   with the current sub-object selection (polled every 200 ms). When armed, the
-   hook swallows the middle events and streams the drag
-   (`VertexDragStart/Move/End`) to MAXScript, which projects the cursor onto the
-   screen plane through the selection and moves the verts.
+4. **Middle button:** MAXScript keeps the hook's `VertexMoveArmed` flag (and the
+   active menu) in sync with the current state. This is **event-driven** —
+   `#selectionSetChanged` and `#modPanelSubObjectLevelChanged` callbacks update
+   it instantly — with a slow 500 ms safety poll only for sub-object *component*
+   selection (which has no callback). When armed, the hook swallows the middle
+   events and streams the drag (`VertexDragStart/Move/End`) to MAXScript, which
+   projects the cursor onto the screen plane through the selection and moves the
+   verts.
 
 ---
 
@@ -44,9 +47,11 @@ required** — just run the script. Windows only.
 
 Step by step, this is what a middle-button drag does:
 
-1. **Arm check (every 200 ms).** `mm_poll` sets `VertexMoveArmed = true` only
-   when a single Editable Poly/Mesh is in **Vertex** sub-object level with **at
-   least one vertex selected**. Otherwise it stays `false`.
+1. **Arm check (event-driven).** `mm_poll` runs on the `#selectionSetChanged` /
+   `#modPanelSubObjectLevelChanged` callbacks (plus a 500 ms safety poll for
+   component selection) and sets `VertexMoveArmed = true` only when a single
+   Editable Poly/Mesh is in **Vertex** sub-object level with **at least one
+   vertex selected**. Otherwise it stays `false`.
 2. **Middle button down.** In the low-level hook:
    - armed → mark the drag, **swallow the event (return 1) so the viewport does
      not pan**, and flag a `VertexDragStart`.
@@ -115,9 +120,9 @@ C:\Users\<you>\AppData\Local\Autodesk\3dsMax\<version>\ENU\scripts\startup\
 
 ## Default marking menus (right button)
 
-The menu shown depends on the current sub-object level (kept in sync every
-200 ms). Slices are clockwise from the top; **Undo/Redo stay on W/E** in every
-menu for muscle memory.
+The menu shown depends on the current sub-object level (kept in sync by the
+selection / sub-object-level callbacks). Slices are clockwise from the top;
+**Undo/Redo stay on W/E** in every menu for muscle memory.
 
 | Dir | Object | Vertex | Edge | Polygon |
 |-----|--------|--------|------|---------|

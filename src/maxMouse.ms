@@ -521,10 +521,22 @@ fn mm_compile = (
     maxMouse_asm = res.CompiledAssembly
 )
 
-fn mm_startArmTimer = (
+-- Event-driven sync: menu switching reacts instantly to selection / sub-object
+-- level callbacks. A slow safety poll remains only for sub-object *component*
+-- selection (e.g. picking more verts at the same level), which has no callback.
+fn mm_addCb evt = (
+    try ( callbacks.addScript evt "if (mm_poll != undefined) do mm_poll()" id:#maxMouseEvt ) catch ()
+)
+fn mm_registerEvents = (
+    callbacks.removeScripts id:#maxMouseEvt
+    mm_addCb #selectionSetChanged           -- node selection changed
+    mm_addCb #modPanelSubObjectLevelChanged  -- sub-object level changed
+    mm_addCb #modPanelSelectionSetChanged    -- modify panel opened on new selection
+    mm_addCb #modPanelObjPostChange
+
     if maxMouse_armTimer != undefined do ( try ( maxMouse_armTimer.Stop() ) catch () )
     maxMouse_armTimer = dotNetObject "System.Windows.Forms.Timer"
-    maxMouse_armTimer.Interval = 200
+    maxMouse_armTimer.Interval = 500         -- safety net for component selection
     dotNet.addEventHandler maxMouse_armTimer "Tick" (fn mm_pollTick s e = mm_poll())
     maxMouse_armTimer.Start()
 )
@@ -554,7 +566,7 @@ fn maxMouse_start = (
     maxMouse_hook.Start()
     mm_lastMenuKey = #object
     mm_setActiveMenu mm_menu_object
-    mm_startArmTimer()
+    mm_registerEvents()
 
     callbacks.removeScripts id:#maxMouse
     callbacks.addScript #preSystemShutdown "if (maxMouse_stop != undefined) do maxMouse_stop()" id:#maxMouse
@@ -565,6 +577,7 @@ fn maxMouse_start = (
 )
 
 fn maxMouse_stop = (
+    callbacks.removeScripts id:#maxMouseEvt
     if maxMouse_armTimer != undefined do ( try ( maxMouse_armTimer.Stop() ) catch (); maxMouse_armTimer = undefined )
     if maxMouse_hook != undefined do ( try ( maxMouse_hook.Stop() ) catch (); maxMouse_hook = undefined )
     mm_lastMenuKey = undefined
