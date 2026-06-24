@@ -1,13 +1,20 @@
 # maxMouse
 
-Mouse gestures for **3ds Max**. Hold the **right** (or **middle**) mouse
-button, draw a quick shape, and release — the drag is recognized as a gesture
-and runs a mapped command. A plain right-click with no drag still opens the
-normal quad menu.
+**Maya-style mouse gestures for 3ds Max.**
 
-Built in MAXScript + a tiny inline C# global mouse hook (`WH_MOUSE_LL`),
-compiled at runtime. **No plugin install or DLL build required** — just run
-the script.
+- **Right button → marking menu.** Press & hold the right button; after a short
+  delay a radial menu of 8 items appears at the cursor. Flick toward a slice
+  and release to run it. Flick *fast* (release before the menu shows) to run it
+  without ever seeing the menu — just like a Maya marking menu. A plain
+  right-click (no movement) still opens the normal quad menu.
+- **Middle button → screen-space vertex move.** When an Editable Poly / Mesh is
+  in **Vertex** sub-object level with a vertex selection, a middle-button drag
+  slides the selected verts along the screen plane (the viewport does **not**
+  pan). When that condition isn't met, the middle button pans as usual.
+
+Built in MAXScript + a small inline C# global mouse hook (`WH_MOUSE_LL`) plus a
+GDI+ radial-menu overlay, compiled at runtime. **No plugin install or DLL build
+required** — just run the script. Windows only.
 
 ---
 
@@ -16,14 +23,18 @@ the script.
 1. `maxMouse.ms` reads the companion `MaxMouse_GestureHook.cs`, compiles it in
    memory with the .NET `CSharpCodeProvider`, and installs a low-level mouse
    hook on the 3ds Max UI thread.
-2. While the right/middle button is held, mouse travel is reduced to a
-   **direction string** made of `U` `D` `L` `R`
-   (e.g. dragging down then right → `"DR"`).
-3. On release:
-   - If you actually dragged (past the threshold), the button-up is swallowed
-     (so the quad menu doesn't pop) and the gesture is dispatched.
-   - If you just clicked, nothing is intercepted — normal behavior.
-4. MAXScript looks the gesture up in the map and runs the action.
+2. The hook callback only updates state and decides **synchronously** whether to
+   swallow an event (so the quad menu / pan are suppressed only when a gesture
+   actually happens). A `Forms.Timer` drives the radial-menu UI and raises the
+   .NET events, so MAXScript never runs re-entrantly inside the hook.
+3. **Right button:** the hook tracks the flick direction, shows/highlights the
+   radial menu, and on release raises `MarkingMenuSelected(index)`. MAXScript
+   maps the slice index to an action.
+4. **Middle button:** MAXScript keeps the hook's `VertexMoveArmed` flag in sync
+   with the current sub-object selection (polled every 200 ms). When armed, the
+   hook swallows the middle events and streams the drag
+   (`VertexDragStart/Move/End`) to MAXScript, which projects the cursor onto the
+   screen plane through the selection and moves the verts.
 
 ---
 
@@ -50,39 +61,20 @@ C:\Users\<you>\AppData\Local\Autodesk\3dsMax\<version>\ENU\scripts\startup\
 
 ---
 
-## Default gestures
+## Default marking menu (right button)
 
-### Right button
+Slices are clockwise from the top:
 
-| Gesture | Drag             | Action                 |
-|---------|------------------|------------------------|
-| `L`     | left             | Undo                   |
-| `R`     | right            | Redo                   |
-| `D`     | down             | Delete selection       |
-| `U`     | up               | Zoom Extents Selected  |
-| `UD`    | up, down         | Zoom Ext. All Selected |
-| `DR`    | down, right      | Hide selection         |
-| `DL`    | down, left       | Unhide all             |
-| `UR`    | up, right        | Toggle Wireframe       |
-| `UL`    | up, left         | Toggle Edged Faces     |
-| `LU`    | left, up         | View: Top              |
-| `LD`    | left, down       | View: Front            |
-| `RU`    | right, up        | View: Perspective      |
-| `RD`    | right, down      | Isolate toggle         |
-
-### Middle button
-
-| Gesture | Action                |
-|---------|-----------------------|
-| `L`     | Undo                  |
-| `R`     | Redo                  |
-| `U`     | Zoom Extents Selected |
-| `D`     | Hide selection        |
-
-> **Middle-button caveat:** the middle button also **pans the viewport** in
-> 3ds Max, so a middle-drag both pans *and* fires the gesture. The right button
-> is the clean primary. To turn the middle button off, set
-> `EnableMiddle = false` in `maxMouse_start()` (in `maxMouse.ms`).
+| Direction | Action               |
+|-----------|----------------------|
+| N (up)    | Zoom Extents Selected|
+| NE        | Toggle Wireframe     |
+| E (right) | Redo                 |
+| SE        | Hide selection       |
+| S (down)  | Delete selection     |
+| SW        | Unhide all           |
+| W (left)  | Undo                 |
+| NW        | Toggle Edged Faces   |
 
 ---
 
@@ -90,23 +82,30 @@ C:\Users\<you>\AppData\Local\Autodesk\3dsMax\<version>\ENU\scripts\startup\
 
 Open `src/maxMouse.ms`:
 
-- **Add an action:** write a `fn mm_myAction = ( ... )` near the top.
-- **Map it:** add a row to `mm_buildMap`, e.g.
-  `#("R", "URD", "My Thing", mm_myAction)` — button `"R"`/`"M"`, the gesture
-  string, a label, and the function.
-- **Sensitivity:** change `MinDistance` in `maxMouse_start()` (smaller = more
-  sensitive, more tokens per drag).
+- **Marking menu:** edit `mm_buildMenu` — the array is the 8 slices in order
+  `N, NE, E, SE, S, SW, W, NW`, each `#("Label", actionFn)`. Add a
+  `fn mm_myAction = ( ... )` near the top and reference it. Re-run the script.
+- **Timing / feel:** in `maxMouse_start()` change `PopupDelayMs` (hold time
+  before the menu appears) and `DeadZone` (px a flick must travel to count).
 
 Re-run `maxMouse.ms` after editing.
 
 ---
 
-## Requirements & notes
+## Notes & caveats
 
-- 3ds Max with MAXScript .NET support (any reasonably modern version).
-  Path auto-detection uses `getThisScriptFilename()` (3ds Max 2016+); older
-  builds fall back to `getSourceFileName()`.
-- The hook is global to your session but only acts on right/middle **drags**;
-  it is removed on Max shutdown (`#preSystemShutdown` callback) and whenever
+- **Vertex move uses the *active* viewport** for screen↔world mapping. Because
+  the middle-down is swallowed to suppress panning, drag in the viewport that is
+  already active (selecting the verts there makes it active).
+- **Editable Poly** uses `polyOp.getVert/setVert` (world space, solid).
+  **Editable Mesh** support edits `node.mesh` and is best-effort across
+  versions — if a mesh misbehaves, convert it to Editable Poly. Modifiers
+  (Edit Poly / Edit Mesh) are **not** handled by the vertex-move feature.
+- Vertex moves are wrapped into a **single undo** entry per drag
+  ("maxMouse Move Verts (screen)").
+- The global hook is removed on Max shutdown (`#preSystemShutdown`) and whenever
   you toggle maxMouse off.
-- Windows only (uses the Win32 mouse hook API).
+- Requires MAXScript .NET support. Script-path auto-detection uses
+  `getThisScriptFilename()` (3ds Max 2016+) with a `getSourceFileName()`
+  fallback. Tested target: Windows, modern 3ds Max — **verify in your Max
+  version**, especially the Editable Mesh path.

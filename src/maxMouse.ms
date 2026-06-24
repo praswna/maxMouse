@@ -1,93 +1,172 @@
-/*  maxMouse - mouse gestures for 3ds Max
+/*  maxMouse - Maya-style mouse gestures for 3ds Max
     --------------------------------------------------------------------------
-    Hold the RIGHT (or MIDDLE) mouse button, drag a shape, release.
-    The drag is reduced to a direction string (U/D/L/R, e.g. "DR" = down then
-    right) and mapped to an action below.
+    RIGHT button : Maya-style MARKING MENU.
+        Press & hold the right button; after a short delay a radial menu of 8
+        items appears at the cursor. Flick toward a slice and release to run
+        it. Flick fast (release before the menu appears) to run it without ever
+        seeing the menu. A plain right-click (no movement) still opens the
+        normal quad menu.
 
-    A plain click (no drag) is passed through untouched, so the normal
-    right-click quad menu still works.
+    MIDDLE button: screen-space VERTEX MOVE.
+        When an Editable Poly / Editable Mesh is in Vertex sub-object level
+        with a vertex selection, a middle-button drag moves the selected verts
+        along the screen plane (the viewport does NOT pan). Otherwise the
+        middle button behaves normally (pan).
 
-    Requires the companion file  MaxMouse_GestureHook.cs  sitting next to this
-    script. To install/run: just evaluate this file (Scripting > Run Script,
-    or drag it into a viewport). It compiles the hook and starts immediately,
-    and also registers a macro "maxMouse Toggle" (category: maxMouse).
+    Requires the companion file  MaxMouse_GestureHook.cs  next to this script.
+    To install/run: evaluate this file (Scripting > Run Script, or drag it into
+    a viewport). It compiles the hook, starts immediately, and registers a
+    macro "maxMouse Toggle" (category: maxMouse).
     --------------------------------------------------------------------------
 */
 
 global maxMouse_hook
 global maxMouse_asm
-global maxMouse_map
+global maxMouse_menu
+global maxMouse_armTimer
 
 -- ===========================================================================
---  ACTIONS  (edit / add your own here, then re-run the script)
+--  ACTIONS  (used by the marking menu below - edit / add your own)
 -- ===========================================================================
 fn mm_undo          = ( max undo )
 fn mm_redo          = ( max redo )
 fn mm_delete        = ( local s = getCurrentSelection(); if s.count > 0 do ( with undo "maxMouse Delete" on ( delete s ) ) )
 fn mm_zoomExtSel    = ( max zoomext sel )
-fn mm_zoomExtAllSel = ( max zoomext sel all )
 fn mm_hideSel       = ( if selection.count > 0 do ( hide (getCurrentSelection()) ) )
 fn mm_unhideAll     = ( max unhide all )
 fn mm_toggleWire    = ( if (viewport.GetRenderLevel() == #wireframe) then viewport.SetRenderLevel #smoothhighlights else viewport.SetRenderLevel #wireframe; redrawViews() )
 fn mm_toggleEdged   = ( viewport.setShowEdgeFaces (not (viewport.getShowEdgeFaces())); redrawViews() )
-fn mm_viewTop       = ( viewport.setType #view_top;        redrawViews() )
-fn mm_viewFront     = ( viewport.setType #view_front;      redrawViews() )
-fn mm_viewPersp     = ( viewport.setType #view_persp_user; redrawViews() )
-fn mm_isolate       = (
-    -- Isolate Selection toggle. Macro name differs across versions, so try a
-    -- few, then fall back to a quiet message.
-    local ok = false
-    try ( macros.run "Tools" "Macro_IsolateSelection"; ok = true ) catch ()
-    if not ok do try ( macros.run "Tools" "IsolateSelection"; ok = true ) catch ()
-    if not ok do format "maxMouse: Isolate Selection macro not found in this Max version.\n"
+
+-- ===========================================================================
+--  MARKING MENU  (slice order is clockwise from the top: N, NE, E, SE, S, SW,
+--  W, NW). Each entry is #( label, action ). Keep labels short.
+-- ===========================================================================
+fn mm_buildMenu = (
+    maxMouse_menu = #(
+        #("Zoom Sel",     mm_zoomExtSel),   -- N
+        #("Wireframe",    mm_toggleWire),   -- NE
+        #("Redo",         mm_redo),         -- E
+        #("Hide",         mm_hideSel),      -- SE
+        #("Delete",       mm_delete),       -- S
+        #("Unhide All",   mm_unhideAll),    -- SW
+        #("Undo",         mm_undo),         -- W
+        #("Edged Faces",  mm_toggleEdged)   -- NW
+    )
 )
 
--- ===========================================================================
---  GESTURE MAP   #( button, gesture, label, action )
---    button : "R" (right)  |  "M" (middle)
---    gesture: direction string built from U / D / L / R
--- ===========================================================================
-fn mm_buildMap = (
-    maxMouse_map = #(
-        --  RIGHT button -----------------------------------------------------
-        #("R", "L",  "Undo",                mm_undo),
-        #("R", "R",  "Redo",                mm_redo),
-        #("R", "D",  "Delete Selection",    mm_delete),
-        #("R", "U",  "Zoom Extents Sel",    mm_zoomExtSel),
-        #("R", "UD", "Zoom Ext. All Sel",   mm_zoomExtAllSel),
-        #("R", "DR", "Hide Selection",      mm_hideSel),
-        #("R", "DL", "Unhide All",          mm_unhideAll),
-        #("R", "UR", "Toggle Wireframe",    mm_toggleWire),
-        #("R", "UL", "Toggle Edged Faces",  mm_toggleEdged),
-        #("R", "LU", "View: Top",           mm_viewTop),
-        #("R", "LD", "View: Front",         mm_viewFront),
-        #("R", "RU", "View: Perspective",   mm_viewPersp),
-        #("R", "RD", "Isolate Toggle",      mm_isolate),
+fn mm_pushMenu = (
+    local al = dotNetObject "System.Collections.ArrayList"
+    for e in maxMouse_menu do al.Add e[1]
+    maxMouse_hook.SetRightMenu al
+)
 
-        --  MIDDLE button ----------------------------------------------------
-        --  NOTE: the middle button also pans the viewport in 3ds Max, so a
-        --  middle-drag gesture will pan AND fire. Keep these few, or set
-        --  EnableMiddle = false in maxMouse_start() to disable entirely.
-        #("M", "L",  "Undo",                mm_undo),
-        #("M", "R",  "Redo",                mm_redo),
-        #("M", "U",  "Zoom Extents Sel",    mm_zoomExtSel),
-        #("M", "D",  "Hide Selection",      mm_hideSel)
+fn mm_onMenuSelect sender args = (
+    local i = args.Index
+    if (i >= 0 and i < maxMouse_menu.count) do (
+        try ( maxMouse_menu[i + 1][2]() )
+        catch ( format "maxMouse: menu action error (slice %): %\n" i (getCurrentException()) )
     )
 )
 
 -- ===========================================================================
---  GESTURE DISPATCH  (called from the .NET event)
+--  VERTEX SCREEN-SPACE MOVE  (middle button)
 -- ===========================================================================
-fn mm_onGesture sender args = (
-    local btn = args.Button
-    local g   = args.Gesture
-    local done = false
-    for e in maxMouse_map while not done where (e[1] == btn and e[2] == g) do (
-        done = true
-        try ( e[4]() )
-        catch ( format "maxMouse action error (% %): %\n" btn g (getCurrentException()) )
-    )
-    if not done do format "maxMouse: unmapped gesture %:%\n" btn g
+global mmv_obj, mmv_isPoly, mmv_meshCopy, mmv_sel, mmv_orig
+global mmv_center, mmv_normal, mmv_offset, mmv_startLocal, mmv_delta, mmv_ok
+
+-- world-space get/set of one vertex, branching Poly vs Mesh
+fn mmv_getWorld i = (
+    if mmv_isPoly then ( polyop.getVert mmv_obj i node:mmv_obj )
+    else ( (getVert mmv_meshCopy i) * mmv_obj.objecttransform )
+)
+fn mmv_setWorld i wp = (
+    if mmv_isPoly then ( polyop.setVert mmv_obj i wp node:mmv_obj )
+    else ( setVert mmv_meshCopy i (wp * (inverse mmv_obj.objecttransform)) )
+)
+fn mmv_commit = (
+    if not mmv_isPoly do ( mmv_obj.mesh = mmv_meshCopy; update mmv_obj.mesh )
+)
+
+-- world point where a screen point projects onto the drag plane
+fn mmv_planePt p = (
+    local r = mapScreenToWorldRay p
+    local denom = dot r.dir mmv_normal
+    if (abs denom) < 1e-7 then mmv_center
+    else ( local t = (dot (mmv_center - r.pos) mmv_normal) / denom; r.pos + t * r.dir )
+)
+
+fn mmv_onStart sender args = (
+    mmv_ok = false
+    try (
+        if selection.count != 1 do return false
+        mmv_obj = selection[1]
+        local b = mmv_obj.baseObject
+        mmv_isPoly = (classof b == Editable_Poly)
+        local isMesh = (classof b == Editable_Mesh)
+        if not (mmv_isPoly or isMesh) do return false
+
+        mmv_meshCopy = if isMesh then mmv_obj.mesh else undefined
+        mmv_sel = (if mmv_isPoly then (polyop.getVertSelection mmv_obj) else (getVertSelection mmv_obj)) as array
+        if mmv_sel.count == 0 do return false
+
+        mmv_orig = for i in mmv_sel collect (mmv_getWorld i)
+        local c = [0,0,0]; for w in mmv_orig do c += w
+        mmv_center = c / mmv_orig.count
+        mmv_normal = normalize ((inverse (viewport.getTM())).row3)
+
+        mmv_offset = [args.X, args.Y] - mouse.pos      -- desktop -> viewport offset
+        mmv_startLocal = [args.X, args.Y] - mmv_offset
+        mmv_delta = [0,0,0]
+        mmv_ok = true
+    ) catch ( format "maxMouse: vertex move start failed: %\n" (getCurrentException()); mmv_ok = false )
+)
+
+fn mmv_onMove sender args = (
+    if not mmv_ok do return false
+    try (
+        local cur = [args.X, args.Y] - mmv_offset
+        mmv_delta = (mmv_planePt cur) - (mmv_planePt mmv_startLocal)
+        for k = 1 to mmv_sel.count do mmv_setWorld mmv_sel[k] (mmv_orig[k] + mmv_delta)
+        mmv_commit()
+        redrawViews()
+    ) catch ( format "maxMouse: vertex move failed: %\n" (getCurrentException()) )
+)
+
+fn mmv_onEnd sender args = (
+    if not mmv_ok do return false
+    mmv_ok = false
+    try (
+        if (length mmv_delta) > 1e-6 do (
+            -- restore (no undo), then re-apply inside one undo block -> single clean undo
+            for k = 1 to mmv_sel.count do mmv_setWorld mmv_sel[k] mmv_orig[k]
+            mmv_commit()
+            with undo "maxMouse Move Verts (screen)" on (
+                for k = 1 to mmv_sel.count do mmv_setWorld mmv_sel[k] (mmv_orig[k] + mmv_delta)
+                mmv_commit()
+            )
+            redrawViews()
+        )
+    ) catch ( format "maxMouse: vertex move commit failed: %\n" (getCurrentException()) )
+)
+
+-- arm/disarm the middle button depending on current sub-object state
+fn mm_updateArmed = (
+    if maxMouse_hook == undefined do return false
+    local armed = false
+    try (
+        if selection.count == 1 do (
+            local o = selection[1]
+            local b = o.baseObject
+            local lvl = try (subobjectLevel) catch (undefined)
+            if (lvl == 1) do (                           -- 1 = Vertex
+                if (classof b == Editable_Poly) do
+                    armed = ((polyop.getVertSelection o).numberSet > 0)
+                if (classof b == Editable_Mesh) do
+                    armed = ((getVertSelection o).numberSet > 0)
+            )
+        )
+    ) catch ( armed = false )
+    maxMouse_hook.VertexMoveArmed = armed
 )
 
 -- ===========================================================================
@@ -115,8 +194,8 @@ fn mm_compile = (
     params.ReferencedAssemblies.Add "System.dll"
     params.ReferencedAssemblies.Add "System.Windows.Forms.dll"
     params.ReferencedAssemblies.Add "System.Drawing.dll"
-    params.GenerateInMemory     = true
-    params.GenerateExecutable   = false
+    params.GenerateInMemory   = true
+    params.GenerateExecutable = false
 
     local res = prov.CompileAssemblyFromSource params #(src)
     if res.Errors.HasErrors do (
@@ -127,36 +206,47 @@ fn mm_compile = (
     maxMouse_asm = res.CompiledAssembly
 )
 
+fn mm_startArmTimer = (
+    if maxMouse_armTimer != undefined do ( try ( maxMouse_armTimer.Stop() ) catch () )
+    maxMouse_armTimer = dotNetObject "System.Windows.Forms.Timer"
+    maxMouse_armTimer.Interval = 200
+    dotNet.addEventHandler maxMouse_armTimer "Tick" (fn mm_armTick s e = mm_updateArmed())
+    maxMouse_armTimer.Start()
+)
+
 fn maxMouse_start = (
     if maxMouse_hook != undefined and maxMouse_hook.IsRunning do (
         format "maxMouse: already running.\n"
         return false
     )
     mm_compile()
-    mm_buildMap()
+    mm_buildMenu()
 
     local t = maxMouse_asm.GetType "MaxMouse.GestureHook"
     maxMouse_hook = (dotNetClass "System.Activator").CreateInstance t
-    maxMouse_hook.EnableRight  = true
-    maxMouse_hook.EnableMiddle = true     -- set false to ignore the middle button
-    maxMouse_hook.MinDistance  = 18
+    maxMouse_hook.EnableRightMenu = true
+    maxMouse_hook.PopupDelayMs    = 160      -- ms to hold before the radial menu shows
+    maxMouse_hook.DeadZone        = 14       -- px; flick shorter than this = cancel/plain click
 
-    dotNet.addEventHandler maxMouse_hook "GestureRecognized" mm_onGesture
+    dotNet.addEventHandler maxMouse_hook "MarkingMenuSelected" mm_onMenuSelect
+    dotNet.addEventHandler maxMouse_hook "VertexDragStart"     mmv_onStart
+    dotNet.addEventHandler maxMouse_hook "VertexDragMove"      mmv_onMove
+    dotNet.addEventHandler maxMouse_hook "VertexDragEnd"       mmv_onEnd
+
     maxMouse_hook.Start()
+    mm_pushMenu()
+    mm_startArmTimer()
 
-    -- make sure the global hook is removed when Max shuts down
     callbacks.removeScripts id:#maxMouse
     callbacks.addScript #preSystemShutdown "if (maxMouse_stop != undefined) do maxMouse_stop()" id:#maxMouse
 
-    format "maxMouse: started (right + middle button gestures).\n"
+    format "maxMouse: started (right = marking menu, middle = vertex move).\n"
     true
 )
 
 fn maxMouse_stop = (
-    if maxMouse_hook != undefined do (
-        try ( maxMouse_hook.Stop() ) catch ()
-        maxMouse_hook = undefined
-    )
+    if maxMouse_armTimer != undefined do ( try ( maxMouse_armTimer.Stop() ) catch (); maxMouse_armTimer = undefined )
+    if maxMouse_hook != undefined do ( try ( maxMouse_hook.Stop() ) catch (); maxMouse_hook = undefined )
     format "maxMouse: stopped.\n"
 )
 
@@ -165,7 +255,7 @@ fn maxMouse_toggle = (
 )
 
 -- ===========================================================================
---  TOOLBAR MACRO  (drag from Customize > Toolbars, category "maxMouse")
+--  TOOLBAR MACRO  (Customize > Toolbars, category "maxMouse")
 -- ===========================================================================
 macroScript maxMouse_Toggle
     category:"maxMouse"
