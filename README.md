@@ -9,10 +9,12 @@
   Maya marking menu. A plain right-click (no movement) still opens the normal
   quad menu. **The menu changes with the current sub-object level** —
   Object / Vertex / Edge / Polygon each get their own set.
-- **Middle button → screen-space vertex move.** When an Editable Poly / Mesh is
-  in **Vertex** sub-object level with a vertex selection, a middle-button drag
-  slides the selected verts along the screen plane (the viewport does **not**
-  pan). When that condition isn't met, the middle button pans as usual.
+- **Ctrl + middle button → screen-space vertex move.** When an Editable Poly /
+  Mesh is in **Vertex** sub-object level, **Ctrl + middle-drag** slides the
+  selected verts along the screen plane. The middle button **alone always pans**
+  as usual — only Ctrl+middle is intercepted, so there's no pan conflict (and
+  no polling needed). The modifier is configurable (`VertexMoveModifier`:
+  0 none, 1 Ctrl, 2 Alt, 3 Shift).
 
 Built in MAXScript + a small inline C# global mouse hook (`WH_MOUSE_LL`) plus a
 GDI+ radial-menu overlay, compiled at runtime. **No plugin install or DLL build
@@ -32,30 +34,33 @@ required** — just run the script. Windows only.
 3. **Right button:** the hook tracks the flick direction, shows/highlights the
    radial menu, and on release raises `MarkingMenuSelected(index)`. MAXScript
    maps the slice index to an action.
-4. **Middle button:** MAXScript keeps the hook's `VertexMoveArmed` flag (and the
-   active menu) in sync with the current state. This is **event-driven** —
-   `#selectionSetChanged` and `#modPanelSubObjectLevelChanged` callbacks update
-   it instantly — with a slow 500 ms safety poll only for sub-object *component*
-   selection (which has no callback). When armed, the hook swallows the middle
-   events and streams the drag (`VertexDragStart/Move/End`) to MAXScript, which
-   projects the cursor onto the screen plane through the selection and moves the
-   verts.
+4. **Ctrl + middle button:** MAXScript keeps the hook's `VertexMoveArmed` flag
+   (and the active menu) in sync with the current sub-object **level** — this is
+   **fully event-driven** via the `#selectionSetChanged` /
+   `#modPanelSubObjectLevelChanged` callbacks, with **no polling timer**. The
+   hook intercepts the middle button only when armed *and* the modifier (Ctrl)
+   is held — checked synchronously with `GetAsyncKeyState` — then swallows the
+   events (so it doesn't pan) and streams the drag
+   (`VertexDragStart/Move/End`) to MAXScript, which projects the cursor onto the
+   screen plane through the selection and moves the verts.
 
 ---
 
-## Middle drag in detail (screen-space vertex move)
+## Ctrl + middle drag in detail (screen-space vertex move)
 
-Step by step, this is what a middle-button drag does:
+Step by step, this is what a **Ctrl + middle-button** drag does:
 
-1. **Arm check (event-driven).** `mm_poll` runs on the `#selectionSetChanged` /
-   `#modPanelSubObjectLevelChanged` callbacks (plus a 500 ms safety poll for
-   component selection) and sets `VertexMoveArmed = true` only when a single
-   Editable Poly/Mesh is in **Vertex** sub-object level with **at least one
-   vertex selected**. Otherwise it stays `false`.
+1. **Arm check (event-driven, no timer).** `mm_poll` runs on the
+   `#selectionSetChanged` / `#modPanelSubObjectLevelChanged` callbacks and sets
+   `VertexMoveArmed = true` whenever a single Editable Poly/Mesh is in **Vertex**
+   sub-object level. (Arming no longer depends on the vertex *count*, so no
+   component-selection polling is required.)
 2. **Middle button down.** In the low-level hook:
-   - armed → mark the drag, **swallow the event (return 1) so the viewport does
-     not pan**, and flag a `VertexDragStart`.
-   - not armed → let it through, so the middle button **pans as normal**.
+   - armed **and Ctrl held** (`GetAsyncKeyState`) → mark the drag, **swallow the
+     event (return 1) so the viewport does not pan**, and flag a
+     `VertexDragStart`.
+   - otherwise → let it through, so the middle button **pans as normal**
+     (middle alone always pans; Ctrl+middle outside vertex level is untouched).
 3. **Mouse move / button up.** While dragging, moves and the final up are
    swallowed too; the hook just records the latest cursor position.
 4. **Event streaming (10 ms timer, UI thread).** A `Forms.Timer` raises
@@ -78,7 +83,7 @@ Step by step, this is what a middle-button drag does:
      (`maxMouse Move Verts (screen)`).
 
 ```
-middle down (verts selected) ──▶ pan suppressed
+Ctrl + middle down (vertex level) ──▶ pan suppressed
         │  drag
         ▼
 cursor projected onto a screen-parallel plane through the selection

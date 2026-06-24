@@ -6,8 +6,10 @@
         a slice and release to run it. Fast flick = run without showing the
         menu. A plain right-click still opens the normal quad menu.
 
-    MIDDLE button: screen-space VERTEX MOVE (Editable Poly/Mesh, vertex level,
-        with a selection). Otherwise the middle button pans normally.
+    CTRL + MIDDLE button: screen-space VERTEX MOVE (Editable Poly/Mesh in vertex
+        level) - drag the selected verts along the screen plane. The middle
+        button ALONE always pans normally; only Ctrl+middle is intercepted, so
+        there's no pan conflict and no polling is needed.
 
     The menus are editable from a GUI:  maxMouse_editor()  (or the "maxMouse
     Editor" macro). Edits can be applied live and saved to an INI so they
@@ -24,7 +26,6 @@
 global maxMouse_hook
 global maxMouse_asm
 global maxMouse_menu                 -- the currently active menu (for dispatch)
-global maxMouse_armTimer
 global maxMouse_iconDir
 global mm_menu_object, mm_menu_vertex, mm_menu_edge, mm_menu_face
 global mm_lastMenuKey
@@ -289,13 +290,13 @@ fn mm_poll = (
     if maxMouse_hook == undefined do return false
     local key = mm_currentLevel()
 
+    -- Vertex move is triggered by Ctrl + middle (checked in the hook), so we
+    -- only need to know whether we're in vertex level on an editable poly/mesh
+    -- (no per-component selection count -> fully callback-driven, no fast poll).
     local armed = false
     if key == #vertex and selection.count == 1 do (
-        local o = selection[1]; local b = o.baseObject
-        try (
-            if (classof b == Editable_Poly) do armed = ((polyop.getVertSelection o).numberSet > 0)
-            if (classof b == Editable_Mesh) do armed = ((getVertSelection o).numberSet > 0)
-        ) catch ( armed = false )
+        local b = selection[1].baseObject
+        armed = (classof b == Editable_Poly or classof b == Editable_Mesh)
     )
     maxMouse_hook.VertexMoveArmed = armed
 
@@ -521,9 +522,10 @@ fn mm_compile = (
     maxMouse_asm = res.CompiledAssembly
 )
 
--- Event-driven sync: menu switching reacts instantly to selection / sub-object
--- level callbacks. A slow safety poll remains only for sub-object *component*
--- selection (e.g. picking more verts at the same level), which has no callback.
+-- Fully event-driven sync: menu switching and vertex-move arming react to
+-- selection / sub-object level callbacks. No polling timer is needed, because
+-- arming only depends on the sub-object *level* (vertex move is triggered by
+-- Ctrl + middle, detected in the hook), and that level is covered by callbacks.
 fn mm_addCb evt = (
     try ( callbacks.addScript evt "if (mm_poll != undefined) do mm_poll()" id:#maxMouseEvt ) catch ()
 )
@@ -533,12 +535,7 @@ fn mm_registerEvents = (
     mm_addCb #modPanelSubObjectLevelChanged  -- sub-object level changed
     mm_addCb #modPanelSelectionSetChanged    -- modify panel opened on new selection
     mm_addCb #modPanelObjPostChange
-
-    if maxMouse_armTimer != undefined do ( try ( maxMouse_armTimer.Stop() ) catch () )
-    maxMouse_armTimer = dotNetObject "System.Windows.Forms.Timer"
-    maxMouse_armTimer.Interval = 500         -- safety net for component selection
-    dotNet.addEventHandler maxMouse_armTimer "Tick" (fn mm_pollTick s e = mm_poll())
-    maxMouse_armTimer.Start()
+    mm_poll()                                -- sync once to the current state
 )
 
 fn maxMouse_start = (
@@ -557,6 +554,7 @@ fn maxMouse_start = (
     maxMouse_hook.EnableRightMenu = true
     maxMouse_hook.PopupDelayMs    = 160
     maxMouse_hook.DeadZone        = 14
+    maxMouse_hook.VertexMoveModifier = 1     -- 0=none, 1=Ctrl, 2=Alt, 3=Shift
 
     dotNet.addEventHandler maxMouse_hook "MarkingMenuSelected" mm_onMenuSelect
     dotNet.addEventHandler maxMouse_hook "VertexDragStart"     mmv_onStart
@@ -578,7 +576,6 @@ fn maxMouse_start = (
 
 fn maxMouse_stop = (
     callbacks.removeScripts id:#maxMouseEvt
-    if maxMouse_armTimer != undefined do ( try ( maxMouse_armTimer.Stop() ) catch (); maxMouse_armTimer = undefined )
     if maxMouse_hook != undefined do ( try ( maxMouse_hook.Stop() ) catch (); maxMouse_hook = undefined )
     mm_lastMenuKey = undefined
     format "maxMouse: stopped.\n"

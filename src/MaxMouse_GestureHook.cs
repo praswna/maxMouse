@@ -221,10 +221,13 @@ namespace MaxMouse
         private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern IntPtr GetModuleHandle(string name);
+        [DllImport("user32.dll")]
+        private static extern short GetAsyncKeyState(int vKey);
 
         // ---- configuration (set from MAXScript) ----
         public bool EnableRightMenu { get; set; }
         public bool VertexMoveArmed { get; set; }
+        public int  VertexMoveModifier { get; set; }  // 0=none, 1=Ctrl, 2=Alt, 3=Shift
         public int  PopupDelayMs    { get; set; }
         public int  DeadZone        { get; set; }
 
@@ -255,11 +258,24 @@ namespace MaxMouse
         {
             EnableRightMenu = true;
             VertexMoveArmed = false;
+            VertexMoveModifier = 1;   // Ctrl + middle by default
             PopupDelayMs    = 160;
             DeadZone        = 14;
         }
 
         public bool IsRunning { get { return _hookId != IntPtr.Zero; } }
+
+        // is the configured vertex-move modifier key currently held?
+        private bool ModifierDown()
+        {
+            switch (VertexMoveModifier)
+            {
+                case 1: return (GetAsyncKeyState(0x11) & 0x8000) != 0; // VK_CONTROL
+                case 2: return (GetAsyncKeyState(0x12) & 0x8000) != 0; // VK_MENU (Alt)
+                case 3: return (GetAsyncKeyState(0x10) & 0x8000) != 0; // VK_SHIFT
+                default: return true;                                  // 0 = no modifier
+            }
+        }
 
         public void SetRightMenu(System.Collections.ArrayList labels, System.Collections.ArrayList icons)
         {
@@ -352,13 +368,13 @@ namespace MaxMouse
                         break;
 
                     case WM_MBUTTONDOWN:
-                        if (VertexMoveArmed)
+                        if (VertexMoveArmed && ModifierDown())
                         {
                             p = Pt(lParam);
                             _vDrag = true;
                             _vStartX = p.x; _vStartY = p.y; _vCurX = p.x; _vCurY = p.y;
                             _vStartReady = true;
-                            return (IntPtr)1;             // swallow: no pan
+                            return (IntPtr)1;             // swallow: no pan (modifier held)
                         }
                         break;
 
