@@ -111,9 +111,9 @@ fn mm_buildActions = (
 )
 
 fn mm_actionFn id = (
-    local r = mm_noop
-    for a in mm_actions while (r == mm_noop) where a[1] == id do r = a[3]
-    r
+    local res = mm_noop
+    for a in mm_actions do ( if a[1] == id do ( res = a[3]; exit ) )
+    res
 )
 fn mm_indexOfId id = (
     local n = findItem mm_actionIds id
@@ -454,8 +454,10 @@ rollout maxMouseEditorRoll "maxMouse - Marking Menu Editor" width:476
     fn readLevel idx = (
         local menu = #()
         for k = 1 to 8 do (
+            local asel = rAct[k].selection
+            if asel < 1 do asel = mm_indexOfId "none"
             local label = rEdit[k].text
-            local id    = mm_actionIds[rAct[k].selection]
+            local id    = mm_actionIds[asel]
             local icon  = if rIcon[k].selection <= 1 then "" else iconNames[rIcon[k].selection - 1]
             append menu #(label, id, icon)
         )

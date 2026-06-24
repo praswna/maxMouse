@@ -338,10 +338,13 @@ namespace MaxMouse
                 switch (msg)
                 {
                     case WM_RBUTTONDOWN:
-                        p = Pt(lParam);
-                        _rmDown = true; _menuShown = false;
-                        _rmStartX = p.x; _rmStartY = p.y; _rmCurX = p.x; _rmCurY = p.y;
-                        _rmDownTick = Environment.TickCount;
+                        if (EnableRightMenu)
+                        {
+                            p = Pt(lParam);
+                            _rmDown = true; _menuShown = false;
+                            _rmStartX = p.x; _rmStartY = p.y; _rmCurX = p.x; _rmCurY = p.y;
+                            _rmDownTick = Environment.TickCount;
+                        }
                         break;
 
                     case WM_RBUTTONUP:
