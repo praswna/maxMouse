@@ -53,6 +53,25 @@ namespace MaxMouse
     // ----------------------------------------------------------------------
     public class RadialMenu : Form
     {
+        // posted (normal-priority) messages used to dispatch the vertex drag,
+        // so it isn't starved like a low-priority WM_TIMER tick.
+        // WM_APP range (0x8000+) is safe from system / WinForms internal use.
+        public const int WM_VSTART = 0x8000 + 1;
+        public const int WM_VMOVE  = 0x8000 + 2;
+        public const int WM_VEND   = 0x8000 + 3;
+        public Action OnVStart, OnVMove, OnVEnd;
+
+        protected override void WndProc(ref Message m)
+        {
+            switch (m.Msg)
+            {
+                case WM_VSTART: if (OnVStart != null) OnVStart(); return;
+                case WM_VMOVE:  if (OnVMove  != null) OnVMove();  return;
+                case WM_VEND:   if (OnVEnd   != null) OnVEnd();   return;
+            }
+            base.WndProc(ref m);
+        }
+
         private string[] _labels = new string[0];
         private string[] _icons = new string[0];
         private readonly Dictionary<string, Image> _iconCache = new Dictionary<string, Image>();
@@ -239,6 +258,8 @@ namespace MaxMouse
         private static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")]
         private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+        [DllImport("user32.dll")]
+        private static extern bool PostMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
 
         // ---- configuration (set from MAXScript) ----
         public bool EnableRightMenu { get; set; }
@@ -264,8 +285,8 @@ namespace MaxMouse
 
         private readonly int _ourPid = System.Diagnostics.Process.GetCurrentProcess().Id;
 
-        // middle-button vertex-drag state
-        private bool _vDrag = false, _vStartReady = false, _vMovePending = false, _vEndReady = false;
+        // middle-button vertex-drag state (dispatched via posted messages)
+        private bool _vDrag = false, _vMovePosted = false;
         private int _vStartX, _vStartY, _vCurX, _vCurY;
 
         public event EventHandler<IndexEventArgs> MarkingMenuSelected;
@@ -316,6 +337,21 @@ namespace MaxMouse
             if (_hookId != IntPtr.Zero) return;
             _menu = new RadialMenu();
             _menu.SetLabels(_rightLabels, _rightIcons);
+            // vertex-drag dispatch (posted messages -> not starved by WM_TIMER)
+            _menu.OnVStart = delegate {
+                EventHandler<PointEventArgs> h = VertexDragStart;
+                if (h != null) h(this, new PointEventArgs(_vStartX, _vStartY));
+            };
+            _menu.OnVMove = delegate {
+                _vMovePosted = false;
+                EventHandler<PointEventArgs> h = VertexDragMove;
+                if (h != null) h(this, new PointEventArgs(_vCurX, _vCurY));
+            };
+            _menu.OnVEnd = delegate {
+                EventHandler<EventArgs> h = VertexDragEnd;
+                if (h != null) h(this, EventArgs.Empty);
+            };
+            IntPtr forceHandle = _menu.Handle;   // create the window so it can receive posts
             _proc = HookCallback;
             _hookId = SetWindowsHookEx(WH_MOUSE_LL, _proc, GetModuleHandle(null), 0);
             _timer = new Timer();
@@ -403,20 +439,21 @@ namespace MaxMouse
                         break;
 
                     case WM_MBUTTONDOWN:
-                        if (VertexMoveArmed && ModifierDown())
+                        if (VertexMoveArmed && ModifierDown() && _menu != null)
                         {
-                            _vDrag = true;
+                            _vDrag = true; _vMovePosted = false;
                             _vStartX = px; _vStartY = py; _vCurX = px; _vCurY = py;
-                            _vStartReady = true;
+                            PostMessage(_menu.Handle, RadialMenu.WM_VSTART, IntPtr.Zero, IntPtr.Zero);
                             return (IntPtr)1;             // swallow: no pan (modifier held)
                         }
                         break;
 
                     case WM_MBUTTONUP:
-                        if (_vDrag)
+                        if (_vDrag && _menu != null)
                         {
                             _vCurX = px; _vCurY = py;
-                            _vDrag = false; _vEndReady = true;
+                            _vDrag = false;
+                            PostMessage(_menu.Handle, RadialMenu.WM_VEND, IntPtr.Zero, IntPtr.Zero);
                             return (IntPtr)1;
                         }
                         break;
@@ -424,7 +461,16 @@ namespace MaxMouse
                     case WM_MOUSEMOVE:
                         // record only; NEVER swallow moves (that would freeze the cursor)
                         if (_rmDown) { _rmCurX = px; _rmCurY = py; }
-                        if (_vDrag)  { _vCurX = px; _vCurY = py; _vMovePending = true; }
+                        if (_vDrag)
+                        {
+                            _vCurX = px; _vCurY = py;
+                            // coalesce: at most one move message in flight
+                            if (!_vMovePosted && _menu != null)
+                            {
+                                _vMovePosted = true;
+                                PostMessage(_menu.Handle, RadialMenu.WM_VMOVE, IntPtr.Zero, IntPtr.Zero);
+                            }
+                        }
                         break;
                 }
             }
@@ -459,26 +505,7 @@ namespace MaxMouse
                 mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, (UIntPtr)(ulong)INJECTED_TAG);
                 mouse_event(MOUSEEVENTF_RIGHTUP,   0, 0, 0, (UIntPtr)(ulong)INJECTED_TAG);
             }
-
-            // vertex drag streaming
-            if (_vStartReady)
-            {
-                _vStartReady = false;
-                EventHandler<PointEventArgs> h = VertexDragStart;
-                if (h != null) h(this, new PointEventArgs(_vStartX, _vStartY));
-            }
-            if (_vMovePending)
-            {
-                _vMovePending = false;
-                EventHandler<PointEventArgs> h = VertexDragMove;
-                if (h != null) h(this, new PointEventArgs(_vCurX, _vCurY));
-            }
-            if (_vEndReady)
-            {
-                _vEndReady = false;
-                EventHandler<EventArgs> h = VertexDragEnd;
-                if (h != null) h(this, EventArgs.Empty);
-            }
+            // (vertex drag is dispatched via posted messages, not here)
         }
     }
 }

@@ -307,7 +307,7 @@ fn mm_poll = (
 --  VERTEX SCREEN-SPACE MOVE  (middle button)
 -- ===========================================================================
 global mmv_obj, mmv_isPoly, mmv_meshCopy, mmv_sel, mmv_orig
-global mmv_center, mmv_normal, mmv_offset, mmv_startLocal, mmv_delta, mmv_ok
+global mmv_center, mmv_normal, mmv_offset, mmv_startLocal, mmv_startWorld, mmv_delta, mmv_ok
 
 fn mmv_getWorld i = (
     if mmv_isPoly then ( polyop.getVert mmv_obj i node:mmv_obj )
@@ -347,6 +347,7 @@ fn mmv_onStart sender args = (
 
         mmv_offset = [args.X, args.Y] - mouse.pos
         mmv_startLocal = [args.X, args.Y] - mmv_offset
+        mmv_startWorld = mmv_planePt mmv_startLocal   -- cache (constant during the drag)
         mmv_delta = [0,0,0]
         mmv_ok = true
     ) catch ( format "maxMouse: vertex move start failed: %\n" (getCurrentException()); mmv_ok = false )
@@ -356,7 +357,7 @@ fn mmv_onMove sender args = (
     if not mmv_ok do return false
     try (
         local cur = [args.X, args.Y] - mmv_offset
-        mmv_delta = (mmv_planePt cur) - (mmv_planePt mmv_startLocal)
+        mmv_delta = (mmv_planePt cur) - mmv_startWorld
         for k = 1 to mmv_sel.count do mmv_setWorld mmv_sel[k] (mmv_orig[k] + mmv_delta)
         mmv_commit()
         redrawViews()
