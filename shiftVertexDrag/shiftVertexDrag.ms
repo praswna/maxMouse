@@ -1,9 +1,10 @@
 /*  shiftVertexDrag - "Shift + 휠(중간버튼) 드래그 = 버텍스를 화면 평면으로 이동"
     ==========================================================================
     [개요]
-    Editable Poly / Editable Mesh 가 "버텍스" 서브오브젝트 레벨일 때,
-    SHIFT 를 누른 채 중간(휠) 버튼으로 드래그하면 선택된 버텍스들이 화면과
-    평행한 평면을 따라 커서를 1:1로 따라 이동합니다. (이때 뷰포트는 팬되지 않음)
+    Editable Poly / Editable Mesh 가 버텍스/엣지/페이스 등 서브오브젝트 레벨일 때,
+    SHIFT 를 누른 채 중간(휠) 버튼으로 드래그하면 선택 서브오브젝트(가 사용하는
+    버텍스들)가 화면과 평행한 평면을 따라 커서를 1:1로 따라 이동합니다.
+    (이때 뷰포트는 팬되지 않음. 엣지/페이스는 구성 버텍스를 옮기는 방식)
 
     - 중간버튼 "단독"은 평소대로 팬으로 동작합니다.
     - 왼쪽 버튼은 절대 건드리지 않습니다.
@@ -61,6 +62,30 @@ fn svm_planePt p = (
     else ( local t = (dot (svm_center - r.pos) svm_normal) / denom; r.pos + t * r.dir )
 )
 
+-- 현재 서브오브젝트 레벨에서 "영향받는 버텍스" 집합(비트배열)을 구함.
+--   1=버텍스: 선택 버텍스 그대로
+--   2=엣지 / 3=보더: 선택 엣지가 사용하는 버텍스
+--   4=폴리곤 / 5=엘리먼트: 선택 페이스가 사용하는 버텍스
+fn svm_gatherVerts obj isPoly lvl = (
+    if isPoly then (
+        case lvl of (
+            1: (polyop.getVertSelection obj)
+            2: (polyop.getVertsUsingEdge obj (polyop.getEdgeSelection obj))
+            3: (polyop.getVertsUsingEdge obj (polyop.getEdgeSelection obj))
+            4: (polyop.getVertsUsingFace obj (polyop.getFaceSelection obj))
+            5: (polyop.getVertsUsingFace obj (polyop.getFaceSelection obj))
+            default: #{}
+        )
+    ) else (
+        -- Editable Mesh (best-effort)
+        case lvl of (
+            1: (getVertSelection obj)
+            2: (try (meshop.getVertsUsingEdge obj (getEdgeSelection obj)) catch (#{}))
+            default: (try (meshop.getVertsUsingFace obj (getFaceSelection obj)) catch (#{}))
+        )
+    )
+)
+
 -- [드래그 시작] Shift+중간 down 시 후크가 보낸 VertexDragStart 이벤트 처리.
 --   현재 선택 버텍스의 월드 원위치/중심/평면법선과, 화면<->뷰포트 좌표 보정값을
 --   저장한다. 유효하지 않으면(객체 아님/선택 0개) svm_ok=false 로 두어 무시.
@@ -75,9 +100,11 @@ fn svm_onStart sender args = (
         if not (svm_isPoly or isMesh) do return false      -- Poly/Mesh 만
 
         svm_meshCopy = if isMesh then svm_obj.mesh else undefined
-        -- 선택된 버텍스 인덱스 배열 (Poly/Mesh 분기)
-        svm_sel = (if svm_isPoly then (polyop.getVertSelection svm_obj) else (getVertSelection svm_obj)) as array
-        if svm_sel.count == 0 do return false               -- 선택된 버텍스 없으면 무동작
+        -- 현재 레벨(버텍스/엣지/페이스)에서 영향받는 버텍스 집합을 모음
+        local lvl = try (subobjectLevel) catch (1)
+        if lvl == undefined do lvl = 1
+        svm_sel = (svm_gatherVerts svm_obj svm_isPoly lvl) as array
+        if svm_sel.count == 0 do return false               -- 옮길 버텍스 없으면 무동작
 
         -- 원위치(월드) 저장 + 중심점 계산
         svm_orig = for i in svm_sel collect (svm_getWorld i)
@@ -143,7 +170,8 @@ fn svm_poll = (
         local b = selection[1].baseObject
         local lvl = try (subobjectLevel) catch (0)           -- 모디파이 패널 아닐 때 undefined 가능
         if lvl == undefined do lvl = 0
-        if lvl == 1 do armed = (classof b == Editable_Poly or classof b == Editable_Mesh)
+        -- 버텍스(1)/엣지(2)/보더(3)/폴리곤(4)/엘리먼트(5) 어느 레벨이든 무장
+        if (lvl >= 1 and lvl <= 5) do armed = (classof b == Editable_Poly or classof b == Editable_Mesh)
     )
     svm_hook.Armed = armed
 )

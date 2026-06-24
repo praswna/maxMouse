@@ -9,10 +9,11 @@ id and macro. You can run it on its own, or alongside maxMouse.
 
 ## What it does
 
-When an **Editable Poly / Editable Mesh** is in **Vertex** sub-object level,
-holding **Shift** and dragging with the **middle mouse button** slides the
-selected verts along a plane parallel to the screen (through the selection
-centroid). The viewport does **not** pan while Shift is held.
+When an **Editable Poly / Editable Mesh** is in a **sub-object level**
+(Vertex / Edge / Border / Polygon / Element), holding **Shift** and dragging
+with the **middle mouse button** slides the selection along a plane parallel to
+the screen (through the selection centroid). Edges and faces are moved by
+moving the vertices they use. The viewport does **not** pan while Shift is held.
 
 - Middle button **alone** pans as usual.
 - The **left** button is never touched.

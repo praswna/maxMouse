@@ -9,10 +9,12 @@ id and macro.
 
 ## What it does
 
-When an **Editable Poly / Editable Mesh** is in **Vertex** sub-object level,
-holding **Ctrl+Shift** and dragging with the **middle mouse button** moves the
-selected verts along the **Working Pivot's Z axis** (world `WorkingPivot.getTM()`
-row 3). If no working pivot is set, it falls back to the **object's local Z**.
+When an **Editable Poly / Editable Mesh** is in a **sub-object level**
+(Vertex / Edge / Border / Polygon / Element), holding **Ctrl+Shift** and
+dragging with the **middle mouse button** moves the selection along the
+**Working Pivot's Z axis** (world `WorkingPivot.getTM()` row 3). If no working
+pivot is set, it falls back to the **object's local Z**. Edges and faces are
+moved by moving the vertices they use.
 
 Align the Working Pivot Z to a surface normal first (e.g. with a pivot-snap
 tool) and this becomes "push/pull along the normal".

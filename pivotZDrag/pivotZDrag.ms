@@ -1,9 +1,10 @@
 /*  pivotZDrag - "Ctrl+Shift + 휠(중간버튼) 드래그 = 워킹 피벗 Z축으로 버텍스 이동"
     ==========================================================================
     [개요]
-    Editable Poly / Editable Mesh 가 "버텍스" 서브오브젝트 레벨일 때,
-    CTRL+SHIFT 를 누른 채 중간(휠) 버튼으로 드래그하면, 선택된 버텍스들이
-    "워킹 피벗(Working Pivot)의 Z축" 방향으로 이동합니다.
+    Editable Poly / Editable Mesh 가 버텍스/엣지/페이스 등 서브오브젝트 레벨일 때,
+    CTRL+SHIFT 를 누른 채 중간(휠) 버튼으로 드래그하면, 선택 서브오브젝트(가 쓰는
+    버텍스들)가 "워킹 피벗(Working Pivot)의 Z축" 방향으로 이동합니다.
+    (엣지/페이스는 그 구성 버텍스를 옮기는 방식)
 
     - 워킹 피벗 Z축을 표면 법선에 맞춰두면(예: 피벗 스냅 도구), 곧 "법선 방향
       밀어내기/집어넣기"가 됩니다. 워킹 피벗이 없으면 오브젝트 로컬 Z로 폴백.
@@ -55,7 +56,28 @@ fn pzd_moveAxis = (
     normalize (tm.row3)                               -- row3 = Z축
 )
 
--- [드래그 시작] 선택 버텍스 원위치/중심/시선법선/이동축 등을 저장
+-- 현재 서브오브젝트 레벨에서 "영향받는 버텍스" 집합(비트배열)을 구함.
+--   1=버텍스 / 2=엣지·3=보더(엣지가 쓰는 버텍스) / 4=폴리곤·5=엘리먼트(페이스가 쓰는 버텍스)
+fn pzd_gatherVerts obj isPoly lvl = (
+    if isPoly then (
+        case lvl of (
+            1: (polyop.getVertSelection obj)
+            2: (polyop.getVertsUsingEdge obj (polyop.getEdgeSelection obj))
+            3: (polyop.getVertsUsingEdge obj (polyop.getEdgeSelection obj))
+            4: (polyop.getVertsUsingFace obj (polyop.getFaceSelection obj))
+            5: (polyop.getVertsUsingFace obj (polyop.getFaceSelection obj))
+            default: #{}
+        )
+    ) else (
+        case lvl of (
+            1: (getVertSelection obj)
+            2: (try (meshop.getVertsUsingEdge obj (getEdgeSelection obj)) catch (#{}))
+            default: (try (meshop.getVertsUsingFace obj (getFaceSelection obj)) catch (#{}))
+        )
+    )
+)
+
+-- [드래그 시작] 선택 서브오브젝트의 버텍스 원위치/중심/시선법선/이동축 등을 저장
 fn pzd_onStart sender args = (
     pzd_ok = false
     try (
@@ -67,7 +89,9 @@ fn pzd_onStart sender args = (
         if not (pzd_isPoly or isMesh) do return false
 
         pzd_meshCopy = if isMesh then pzd_obj.mesh else undefined
-        pzd_sel = (if pzd_isPoly then (polyop.getVertSelection pzd_obj) else (getVertSelection pzd_obj)) as array
+        local lvl = try (subobjectLevel) catch (1)
+        if lvl == undefined do lvl = 1
+        pzd_sel = (pzd_gatherVerts pzd_obj pzd_isPoly lvl) as array
         if pzd_sel.count == 0 do return false
 
         pzd_orig = for i in pzd_sel collect (pzd_getWorld i)
@@ -126,7 +150,8 @@ fn pzd_poll = (
         local b = selection[1].baseObject
         local lvl = try (subobjectLevel) catch (0)
         if lvl == undefined do lvl = 0
-        if lvl == 1 do armed = (classof b == Editable_Poly or classof b == Editable_Mesh)
+        -- 버텍스(1)/엣지(2)/보더(3)/폴리곤(4)/엘리먼트(5) 어느 레벨이든 무장
+        if (lvl >= 1 and lvl <= 5) do armed = (classof b == Editable_Poly or classof b == Editable_Mesh)
     )
     pzd_hook.Armed = armed
 )
