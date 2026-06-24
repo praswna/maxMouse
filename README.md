@@ -2,11 +2,13 @@
 
 **Maya-style mouse gestures for 3ds Max.**
 
-- **Right button → marking menu.** Press & hold the right button; after a short
-  delay a radial menu of 8 items appears at the cursor. Flick toward a slice
-  and release to run it. Flick *fast* (release before the menu shows) to run it
-  without ever seeing the menu — just like a Maya marking menu. A plain
-  right-click (no movement) still opens the normal quad menu.
+- **Right button → marking menu (context-sensitive).** Press & hold the right
+  button; after a short delay a radial menu of 8 items (with icons) appears at
+  the cursor. Flick toward a slice and release to run it. Flick *fast* (release
+  before the menu shows) to run it without ever seeing the menu — just like a
+  Maya marking menu. A plain right-click (no movement) still opens the normal
+  quad menu. **The menu changes with the current sub-object level** —
+  Object / Vertex / Edge / Polygon each get their own set.
 - **Middle button → screen-space vertex move.** When an Editable Poly / Mesh is
   in **Vertex** sub-object level with a vertex selection, a middle-button drag
   slides the selected verts along the screen plane (the viewport does **not**
@@ -61,20 +63,35 @@ C:\Users\<you>\AppData\Local\Autodesk\3dsMax\<version>\ENU\scripts\startup\
 
 ---
 
-## Default marking menu (right button)
+## Default marking menus (right button)
 
-Slices are clockwise from the top:
+The menu shown depends on the current sub-object level (kept in sync every
+200 ms). Slices are clockwise from the top; **Undo/Redo stay on W/E** in every
+menu for muscle memory.
 
-| Direction | Action               |
-|-----------|----------------------|
-| N (up)    | Zoom Extents Selected|
-| NE        | Toggle Wireframe     |
-| E (right) | Redo                 |
-| SE        | Hide selection       |
-| S (down)  | Delete selection     |
-| SW        | Unhide all           |
-| W (left)  | Undo                 |
-| NW        | Toggle Edged Faces   |
+| Dir | Object | Vertex | Edge | Polygon |
+|-----|--------|--------|------|---------|
+| N   | Zoom Sel  | Weld     | Connect  | Extrude  |
+| NE  | Wireframe | Connect  | Chamfer  | Bevel    |
+| E   | Redo      | Redo     | Redo     | Redo     |
+| SE  | Hide      | Chamfer  | Collapse | Inset    |
+| S   | Delete    | Remove   | Remove   | Delete   |
+| SW  | Unhide All| Collapse | Cut      | Collapse |
+| W   | Undo      | Undo     | Undo     | Undo     |
+| NW  | Edged     | Break    | Split    | Detach   |
+
+Sub-object operations use the **Editable Poly `buttonOp`** interface (the same
+as clicking the command-panel button: they act on the current selection with
+the object's current settings). They require an **Editable Poly** base object;
+on an Editable Mesh they print a message (convert to Editable Poly).
+
+### Icons
+
+Each slice can show a 24×24 icon. Icons are PNG files in `icons/`, referenced
+by name in the menu tables (e.g. `"weld"` → `icons/weld.png`). A simple
+placeholder set is included — drop in your own PNGs of the same names to
+replace them. Regenerate the placeholders with `python tools/make_icons.py`.
+If an icon file is missing, the slice shows just its label.
 
 ---
 
@@ -82,9 +99,13 @@ Slices are clockwise from the top:
 
 Open `src/maxMouse.ms`:
 
-- **Marking menu:** edit `mm_buildMenu` — the array is the 8 slices in order
-  `N, NE, E, SE, S, SW, W, NW`, each `#("Label", actionFn)`. Add a
-  `fn mm_myAction = ( ... )` near the top and reference it. Re-run the script.
+- **Marking menus:** edit `mm_buildMenus` — there are four arrays
+  (`mm_menu_object/vertex/edge/face`), each the 8 slices in order
+  `N, NE, E, SE, S, SW, W, NW`, each entry `#("Label", actionFn, "iconName")`.
+  Add a `fn mm_myAction = ( ... )` near the top (or a `mm_bop #SomeEnum`
+  wrapper for an Editable Poly command) and reference it.
+- **Level → menu mapping:** `mm_currentLevel` / `mm_menuFor`.
+- **Icons:** put `<iconName>.png` in `icons/`.
 - **Timing / feel:** in `maxMouse_start()` change `PopupDelayMs` (hold time
   before the menu appears) and `DeadZone` (px a flick must travel to count).
 

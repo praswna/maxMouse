@@ -21,8 +21,10 @@
 // inside the hook).
 
 using System;
+using System.IO;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
@@ -47,6 +49,8 @@ namespace MaxMouse
     public class RadialMenu : Form
     {
         private string[] _labels = new string[0];
+        private string[] _icons = new string[0];
+        private readonly Dictionary<string, Image> _iconCache = new Dictionary<string, Image>();
         private int _highlight = -1;
         private readonly int _radius = 95;
 
@@ -84,7 +88,30 @@ namespace MaxMouse
             }
         }
 
-        public void SetLabels(string[] labels) { _labels = labels ?? new string[0]; Invalidate(); }
+        public void SetLabels(string[] labels, string[] icons)
+        {
+            _labels = labels ?? new string[0];
+            _icons  = icons  ?? new string[0];
+            Invalidate();
+        }
+
+        private Image GetIcon(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            Image img;
+            if (_iconCache.TryGetValue(path, out img)) return img;
+            img = null;
+            try
+            {
+                if (File.Exists(path))
+                    using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read))
+                    using (Image tmp = Image.FromStream(fs))
+                        img = new Bitmap(tmp);   // copy so we don't hold the file open
+            }
+            catch { img = null; }
+            _iconCache[path] = img;
+            return img;
+        }
 
         public int Highlight
         {
@@ -148,7 +175,16 @@ namespace MaxMouse
                     float lx = cx + (float)(Math.Sin(comp) * _radius * 0.72);
                     float ly = cy - (float)(Math.Cos(comp) * _radius * 0.72);
                     string txt = _labels[i] ?? "";
-                    g.DrawString(txt, f, tb, new RectangleF(lx - 44, ly - 12, 88, 24), sf);
+                    Image ic = (i < _icons.Length) ? GetIcon(_icons[i]) : null;
+                    if (ic != null)
+                    {
+                        g.DrawImage(ic, lx - 12, ly - 20, 24, 24);
+                        g.DrawString(txt, f, tb, new RectangleF(lx - 44, ly + 5, 88, 18), sf);
+                    }
+                    else
+                    {
+                        g.DrawString(txt, f, tb, new RectangleF(lx - 44, ly - 11, 88, 22), sf);
+                    }
                 }
             }
         }
@@ -197,6 +233,7 @@ namespace MaxMouse
         private Timer _timer;
         private RadialMenu _menu;
         private string[] _rightLabels = new string[0];
+        private string[] _rightIcons = new string[0];
         private int _slices = 0;
 
         // right-button marking-menu state
@@ -224,21 +261,26 @@ namespace MaxMouse
 
         public bool IsRunning { get { return _hookId != IntPtr.Zero; } }
 
-        public void SetRightMenu(System.Collections.ArrayList labels)
+        public void SetRightMenu(System.Collections.ArrayList labels, System.Collections.ArrayList icons)
         {
-            string[] arr = new string[labels.Count];
+            string[] L = new string[labels.Count];
+            string[] I = new string[labels.Count];
             for (int i = 0; i < labels.Count; i++)
-                arr[i] = labels[i] == null ? "" : labels[i].ToString();
-            _rightLabels = arr;
-            _slices = arr.Length;
-            if (_menu != null) _menu.SetLabels(arr);
+            {
+                L[i] = labels[i] == null ? "" : labels[i].ToString();
+                I[i] = (icons != null && i < icons.Count && icons[i] != null) ? icons[i].ToString() : "";
+            }
+            _rightLabels = L;
+            _rightIcons  = I;
+            _slices = L.Length;
+            if (_menu != null) _menu.SetLabels(L, I);
         }
 
         public void Start()
         {
             if (_hookId != IntPtr.Zero) return;
             _menu = new RadialMenu();
-            _menu.SetLabels(_rightLabels);
+            _menu.SetLabels(_rightLabels, _rightIcons);
             _proc = HookCallback;
             _hookId = SetWindowsHookEx(WH_MOUSE_LL, _proc, GetModuleHandle(null), 0);
             _timer = new Timer();
