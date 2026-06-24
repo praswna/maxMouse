@@ -11,16 +11,18 @@ id and macro.
 
 When an **Editable Poly / Editable Mesh** is in a **sub-object level**
 (Vertex / Edge / Border / Polygon / Element), holding **Ctrl+Shift** and
-dragging with the **middle mouse button** pushes/pulls the selection along its
-**surface normal**. Edges and faces are moved by moving the vertices they use.
+dragging with the **middle mouse button** moves each selected vertex along
+**its own surface normal** by the same distance (a normal offset / inflate).
+With a multi-selection every vertex goes its own way; selecting a face or edge
+moves the vertices it uses, each along its own normal — the selection looks
+like faces/edges but the motion happens per vertex.
 
-On drag start it computes the selection's average face normal (in world space),
-aligns the **Working Pivot** Z to it, and switches the coordinate system to
-**Working Pivot** — so you don't have to run a pivot-snap tool first. When the
-drag ends, the **original coordinate system and Working Pivot transform are
-restored** (non-destructive — it won't clobber a pivot you set elsewhere). If a
-normal can't be found (isolated verts / mesh), it falls back to the current
-Working Pivot Z, then the object's local Z.
+The drag amount (a scalar) is the screen-plane movement projected onto the
+**average** normal (drag out = inflate, drag in = deflate). The Working Pivot
+is briefly aligned to that average normal and the coordinate system switched to
+**Working Pivot** for visual feedback, then both are **restored** on release
+(non-destructive). If a vertex normal can't be found, that vertex falls back to
++Z.
 
 Align the Working Pivot Z to a surface normal first (e.g. with a pivot-snap
 tool) and this becomes "push/pull along the normal".
