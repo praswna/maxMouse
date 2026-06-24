@@ -6,9 +6,9 @@
         a slice and release to run it. Fast flick = run without showing the
         menu. A plain right-click still opens the normal quad menu.
 
-    CTRL + MIDDLE button: screen-space VERTEX MOVE (Editable Poly/Mesh in vertex
+    SHIFT + MIDDLE button: screen-space VERTEX MOVE (Editable Poly/Mesh in vertex
         level) - drag the selected verts along the screen plane. The middle
-        button ALONE always pans normally; only Ctrl+middle is intercepted, so
+        button ALONE always pans normally; only Shift+middle is intercepted, so
         there's no pan conflict and no polling is needed.
 
     The menus are editable from a GUI:  maxMouse_editor()  (or the "maxMouse
@@ -556,7 +556,7 @@ fn maxMouse_start = (
     maxMouse_hook.EnableRightMenu = true
     maxMouse_hook.PopupDelayMs    = 160
     maxMouse_hook.DeadZone        = 14
-    maxMouse_hook.VertexMoveModifier = 1     -- 0=none, 1=Ctrl, 2=Alt, 3=Shift
+    maxMouse_hook.VertexMoveModifier = 3     -- 0=none, 1=Ctrl, 2=Alt, 3=Shift
 
     dotNet.addEventHandler maxMouse_hook "MarkingMenuSelected" mm_onMenuSelect
     dotNet.addEventHandler maxMouse_hook "VertexDragStart"     mmv_onStart
