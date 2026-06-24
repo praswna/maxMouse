@@ -28,11 +28,17 @@ required** — just run the script. Windows only.
    memory with the .NET `CSharpCodeProvider`, and installs a low-level mouse
    hook on the 3ds Max UI thread.
 2. The hook callback only updates state and decides **synchronously** whether to
-   swallow an event (so the quad menu / pan are suppressed only when a gesture
-   actually happens). A `Forms.Timer` drives the radial-menu UI and raises the
-   .NET events, so MAXScript never runs re-entrantly inside the hook.
-3. **Right button:** the hook tracks the flick direction, shows/highlights the
-   radial menu, and on release raises `MarkingMenuSelected(index)`. MAXScript
+   swallow an event. It only acts while **3ds Max is the foreground process**
+   (other apps are untouched), and it **never swallows mouse moves** (only button
+   events), so the cursor can never freeze. A `Forms.Timer` drives the
+   radial-menu UI and raises the .NET events, so MAXScript never runs
+   re-entrantly inside the hook.
+3. **Right button:** the hook swallows both the down and the up (so Max never
+   sees an unmatched right-button-down), tracks the flick direction,
+   shows/highlights the radial menu, and on release raises
+   `MarkingMenuSelected(index)`. A plain right-click (no flick) is reproduced as
+   a tagged synthetic right-click so the normal quad menu still appears.
+   MAXScript
    maps the slice index to an action.
 4. **Shift + middle button:** MAXScript keeps the hook's `VertexMoveArmed` flag
    (and the active menu) in sync with the current sub-object **level** — this is

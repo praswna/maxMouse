@@ -5,14 +5,19 @@
 // RIGHT button  -> Maya-style marking menu:
 //     hold, a radial menu pops up after a short delay, flick toward a slice
 //     and release to run it. A fast flick (released before the delay) runs the
-//     slice without ever showing the menu. A plain click (no movement) is
-//     passed through so the normal quad menu still works.
+//     slice without ever showing the menu. Both the down AND up are swallowed,
+//     so Max never sees an unmatched right-button-down; a plain click (no
+//     movement) is reproduced as a tagged synthetic right-click so the normal
+//     quad menu still appears.
 //
-// MIDDLE button -> screen-space vertex move (when armed by MAXScript, i.e.
-//     Editable Poly/Mesh in vertex sub-object level with a vertex selection).
-//     The middle events are swallowed (so the viewport does not pan) and the
-//     drag is streamed to MAXScript, which moves the selected verts along the
-//     screen plane. When not armed, the middle button is left alone (pan).
+// SHIFT+MIDDLE  -> screen-space vertex move (when armed by MAXScript, i.e.
+//     Editable Poly/Mesh in vertex sub-object level). The middle down/up are
+//     swallowed (so the viewport does not pan); mouse MOVES are never swallowed
+//     (that would freeze the cursor). The drag is streamed to MAXScript, which
+//     moves the selected verts along the screen plane.
+//
+// The hook only acts while 3ds Max is the foreground process, so it never
+// disturbs other applications. The left button is never touched.
 //
 // All timing / UI / event raising happens on the 3ds Max UI thread: the
 // low-level hook callback only updates state and decides synchronously whether
@@ -84,6 +89,7 @@ namespace MaxMouse
                 CreateParams cp = base.CreateParams;
                 cp.ExStyle |= 0x08000000; // WS_EX_NOACTIVATE
                 cp.ExStyle |= 0x00000080; // WS_EX_TOOLWINDOW (keep out of alt-tab)
+                cp.ExStyle |= 0x00000020; // WS_EX_TRANSPARENT (click-through, never eats input)
                 return cp;
             }
         }
@@ -201,6 +207,10 @@ namespace MaxMouse
         private const int WM_RBUTTONUP   = 0x0205;
         private const int WM_MBUTTONDOWN = 0x0207;
         private const int WM_MBUTTONUP   = 0x0208;
+        private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
+        private const uint MOUSEEVENTF_RIGHTUP   = 0x0010;
+        // tag used on synthesized right-clicks so the hook ignores its own input
+        private const long INJECTED_TAG = 0x4D4D6D6D;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct POINT { public int x; public int y; }
@@ -223,6 +233,12 @@ namespace MaxMouse
         private static extern IntPtr GetModuleHandle(string name);
         [DllImport("user32.dll")]
         private static extern short GetAsyncKeyState(int vKey);
+        [DllImport("user32.dll")]
+        private static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
 
         // ---- configuration (set from MAXScript) ----
         public bool EnableRightMenu { get; set; }
@@ -243,7 +259,10 @@ namespace MaxMouse
         private bool _rmDown = false, _menuShown = false;
         private int _rmStartX, _rmStartY, _rmCurX, _rmCurY, _rmDownTick;
         private bool _rmResultReady = false;
+        private bool _rmInjectClick = false;
         private int _rmResult = -1;
+
+        private readonly int _ourPid = System.Diagnostics.Process.GetCurrentProcess().Id;
 
         // middle-button vertex-drag state
         private bool _vDrag = false, _vStartReady = false, _vMovePending = false, _vEndReady = false;
@@ -324,58 +343,70 @@ namespace MaxMouse
             return ((int)Math.Round(ang / step)) % _slices;
         }
 
-        private POINT Pt(IntPtr lParam)
+        // only act while a window of THIS process (3ds Max) is in the foreground,
+        // so we never interfere with other applications
+        private bool MaxIsForeground()
         {
-            return ((MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT))).pt;
+            IntPtr h = GetForegroundWindow();
+            if (h == IntPtr.Zero) return false;
+            uint pid;
+            GetWindowThreadProcessId(h, out pid);
+            return pid == (uint)_ourPid;
         }
 
         private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
             if (nCode >= 0)
             {
+                MSLLHOOKSTRUCT data = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
+
+                // ignore the right-clicks we synthesize ourselves
+                if (data.dwExtraInfo.ToInt64() == INJECTED_TAG)
+                    return CallNextHookEx(_hookId, nCode, wParam, lParam);
+
+                // leave every other application completely alone
+                if (!MaxIsForeground())
+                    return CallNextHookEx(_hookId, nCode, wParam, lParam);
+
                 int msg = wParam.ToInt32();
-                POINT p;
+                int px = data.pt.x, py = data.pt.y;
                 switch (msg)
                 {
                     case WM_RBUTTONDOWN:
                         if (EnableRightMenu)
                         {
-                            p = Pt(lParam);
                             _rmDown = true; _menuShown = false;
-                            _rmStartX = p.x; _rmStartY = p.y; _rmCurX = p.x; _rmCurY = p.y;
+                            _rmStartX = px; _rmStartY = py; _rmCurX = px; _rmCurY = py;
                             _rmDownTick = Environment.TickCount;
+                            // swallow the down too; a plain click is reproduced on up
+                            // (so Max never sees an unmatched right-button-down)
+                            return (IntPtr)1;
                         }
                         break;
 
                     case WM_RBUTTONUP:
                         if (_rmDown)
                         {
-                            p = Pt(lParam);
-                            _rmCurX = p.x; _rmCurY = p.y;
+                            _rmCurX = px; _rmCurY = py;
                             _rmDown = false;
-                            int idx = SliceIndex(p.x - _rmStartX, p.y - _rmStartY);
-                            if (_menuShown)
+                            int idx = SliceIndex(px - _rmStartX, py - _rmStartY);
+                            if (_menuShown || idx >= 0)
+                                _rmResult = idx;           // gesture / quick flick (idx -1 = cancel)
+                            else
                             {
-                                _rmResult = idx;          // -1 -> cancel
-                                _rmResultReady = true;
-                                return (IntPtr)1;         // swallow: no quad menu
+                                _rmResult = -1;            // plain click: no action...
+                                _rmInjectClick = true;     // ...reproduce a normal right-click instead
                             }
-                            else if (idx >= 0)
-                            {
-                                _rmResult = idx;          // quick flick, menu never shown
-                                _rmResultReady = true;
-                                return (IntPtr)1;
-                            }
-                            // else: a plain click -> let it through (normal quad menu)
+                            _rmResultReady = true;
+                            return (IntPtr)1;              // always swallow the original up
                         }
                         break;
 
                     case WM_MBUTTONDOWN:
                         if (VertexMoveArmed && ModifierDown())
                         {
-                            p = Pt(lParam);
                             _vDrag = true;
-                            _vStartX = p.x; _vStartY = p.y; _vCurX = p.x; _vCurY = p.y;
+                            _vStartX = px; _vStartY = py; _vCurX = px; _vCurY = py;
                             _vStartReady = true;
                             return (IntPtr)1;             // swallow: no pan (modifier held)
                         }
@@ -384,17 +415,16 @@ namespace MaxMouse
                     case WM_MBUTTONUP:
                         if (_vDrag)
                         {
-                            p = Pt(lParam);
-                            _vCurX = p.x; _vCurY = p.y;
+                            _vCurX = px; _vCurY = py;
                             _vDrag = false; _vEndReady = true;
                             return (IntPtr)1;
                         }
                         break;
 
                     case WM_MOUSEMOVE:
-                        p = Pt(lParam);
-                        if (_rmDown) { _rmCurX = p.x; _rmCurY = p.y; }
-                        if (_vDrag)  { _vCurX = p.x; _vCurY = p.y; _vMovePending = true; return (IntPtr)1; }
+                        // record only; NEVER swallow moves (that would freeze the cursor)
+                        if (_rmDown) { _rmCurX = px; _rmCurY = py; }
+                        if (_vDrag)  { _vCurX = px; _vCurY = py; _vMovePending = true; }
                         break;
                 }
             }
@@ -419,6 +449,15 @@ namespace MaxMouse
                 if (_menuShown) { _menu.Hide(); _menuShown = false; }
                 EventHandler<IndexEventArgs> h = MarkingMenuSelected;
                 if (h != null && _rmResult >= 0) h(this, new IndexEventArgs(_rmResult));
+            }
+
+            // reproduce a normal right-click for a plain (non-gesture) right click,
+            // tagged so the hook ignores it -> the usual quad menu appears
+            if (_rmInjectClick)
+            {
+                _rmInjectClick = false;
+                mouse_event(MOUSEEVENTF_RIGHTDOWN, 0, 0, 0, (UIntPtr)(ulong)INJECTED_TAG);
+                mouse_event(MOUSEEVENTF_RIGHTUP,   0, 0, 0, (UIntPtr)(ulong)INJECTED_TAG);
             }
 
             // vertex drag streaming
