@@ -9,7 +9,7 @@
     - 드래그 시작 시 선택의 평균 법선(월드)을 계산해 워킹 피벗 Z축을 그 법선에
       정렬하고, 좌표계를 "워킹 피벗"으로 전환합니다. (스냅 도구를 먼저 안 돌려도 됨)
     - 화면 평면 드래그를 그 축에 투영한 만큼 이동합니다(Max 기즈모 축 드래그 느낌).
-    - 드래그가 끝나면 좌표계를 원래대로 복원합니다.
+    - 드래그가 끝나면 좌표계와 워킹 피벗 TM 을 원래대로 복원합니다(비파괴).
     - 법선을 못 구하면(고립 버텍스/메시 등) 현재 워킹 피벗 Z, 그래도 없으면
       오브젝트 로컬 Z축으로 폴백.
     - 드래그는 "화면 평면 이동량을 그 축에 투영"해서 적용합니다. 즉 축이 화면에
@@ -31,6 +31,7 @@ global pzd_asm
 global pzd_obj, pzd_isPoly, pzd_meshCopy, pzd_sel, pzd_orig
 global pzd_center, pzd_normal, pzd_axis, pzd_offset, pzd_startLocal, pzd_startWorld, pzd_delta, pzd_ok
 global pzd_prevCoord                 -- 드래그 전 좌표계(끝나면 복원)
+global pzd_prevPivotTM               -- 드래그 전 워킹 피벗 TM(끝나면 복원, 비파괴)
 
 -- ===========================================================================
 --  버텍스 이동 (월드 좌표 기반, Poly/Mesh 분기)
@@ -135,8 +136,9 @@ fn pzd_onStart sender args = (
         pzd_axis   = pzd_computeAxis pzd_obj pzd_isPoly lvl          -- 이동축 = 선택 법선(월드)
 
         -- 워킹 피벗을 그 법선 방향으로 정렬하고, 좌표계를 워킹 피벗으로 전환.
-        -- 현재 좌표계는 저장해 두었다가 드래그가 끝나면 복원한다.
-        pzd_prevCoord = try (getRefCoordSys()) catch (#world)
+        -- 현재 좌표계와 워킹 피벗 TM 을 저장해 두었다가 드래그가 끝나면 복원한다(비파괴).
+        pzd_prevCoord   = try (getRefCoordSys()) catch (#world)
+        pzd_prevPivotTM = try (WorkingPivot.getTM()) catch (undefined)
         try (
             WorkingPivot.setTM (pzd_tmFromZ pzd_axis pzd_center)
             toolMode.coordsys #working_pivot
@@ -179,7 +181,8 @@ fn pzd_onEnd sender args = (
             redrawViews()
         )
     ) catch ( format "pivotZDrag: commit failed: %\n" (getCurrentException()) )
-    -- 좌표계를 드래그 전 상태로 복원
+    -- 워킹 피벗 TM 과 좌표계를 드래그 전 상태로 복원(비파괴)
+    if pzd_prevPivotTM != undefined do ( try ( WorkingPivot.setTM pzd_prevPivotTM ) catch () )
     if pzd_prevCoord != undefined do ( try ( toolMode.coordsys pzd_prevCoord ) catch () )
 )
 
