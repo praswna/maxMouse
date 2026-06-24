@@ -2,13 +2,16 @@
     ==========================================================================
     [개요]
     Editable Poly / Editable Mesh 가 버텍스/엣지/페이스 등 서브오브젝트 레벨일 때,
-    CTRL+SHIFT 를 누른 채 중간(휠) 버튼으로 드래그하면, 선택 서브오브젝트(가 쓰는
-    버텍스들)가 "워킹 피벗(Working Pivot)의 Z축" 방향으로 이동합니다.
-    (엣지/페이스는 그 구성 버텍스를 옮기는 방식)
+    CTRL+SHIFT 를 누른 채 중간(휠) 버튼으로 드래그하면, 선택 서브오브젝트를
+    "표면 법선 방향"으로 밀어내기/집어넣기 합니다. (엣지/페이스는 구성 버텍스를 이동)
 
-    - 드래그 시작 시 활성 좌표계를 "워킹 피벗"으로 자동 전환합니다.
-    - 워킹 피벗 Z축을 표면 법선에 맞춰두면(예: 피벗 스냅 도구), 곧 "법선 방향
-      밀어내기/집어넣기"가 됩니다. 워킹 피벗이 없으면 오브젝트 로컬 Z로 폴백.
+    동작:
+    - 드래그 시작 시 선택의 평균 법선(월드)을 계산해 워킹 피벗 Z축을 그 법선에
+      정렬하고, 좌표계를 "워킹 피벗"으로 전환합니다. (스냅 도구를 먼저 안 돌려도 됨)
+    - 화면 평면 드래그를 그 축에 투영한 만큼 이동합니다(Max 기즈모 축 드래그 느낌).
+    - 드래그가 끝나면 좌표계를 원래대로 복원합니다.
+    - 법선을 못 구하면(고립 버텍스/메시 등) 현재 워킹 피벗 Z, 그래도 없으면
+      오브젝트 로컬 Z축으로 폴백.
     - 드래그는 "화면 평면 이동량을 그 축에 투영"해서 적용합니다. 즉 축이 화면에
       보이는 방향으로 끌면 그 축을 따라 이동(= Max 기즈모 축 드래그와 동일한 느낌).
     - 중간버튼 단독/Shift만/왼쪽버튼은 건드리지 않습니다(정확 매칭이라 Shift 전용
@@ -27,6 +30,7 @@ global pzd_hook
 global pzd_asm
 global pzd_obj, pzd_isPoly, pzd_meshCopy, pzd_sel, pzd_orig
 global pzd_center, pzd_normal, pzd_axis, pzd_offset, pzd_startLocal, pzd_startWorld, pzd_delta, pzd_ok
+global pzd_prevCoord                 -- 드래그 전 좌표계(끝나면 복원)
 
 -- ===========================================================================
 --  버텍스 이동 (월드 좌표 기반, Poly/Mesh 분기)
@@ -49,18 +53,40 @@ fn pzd_planePt p = (
     else ( local t = (dot (pzd_center - r.pos) pzd_normal) / denom; r.pos + t * r.dir )
 )
 
--- 이동축(월드) 구하기.
---   먼저 활성 좌표계를 "워킹 피벗"으로 자동 전환한 뒤(사용자 기대 동작) 그 TM의
---   Z축을 사용한다. 워킹 피벗을 활성화해야 getTM 이 실제 워킹 피벗 변환을 돌려준다.
---   실패/미설정이면 오브젝트 로컬 Z축으로 폴백.
-fn pzd_moveAxis = (
+-- Z 방향으로부터 직교 행렬(matrix3) 생성 (X/Y는 임의의 직교축)
+fn pzd_tmFromZ zdir pos = (
+    local z = normalize zdir
+    local upv = if (abs (dot z [0,0,1])) > 0.99 then [1,0,0] else [0,0,1]
+    local x = normalize (cross upv z)
+    local y = normalize (cross z x)
+    matrix3 x y z pos
+)
+
+-- 이동축(월드) 계산.
+--   Poly면 "선택이 사용하는 페이스들의 평균 법선"을 월드로 변환해 축으로 사용
+--   (버텍스/엣지는 연결 페이스, 페이스는 선택 페이스). 법선을 못 구하면(고립
+--   버텍스/메시 등) 현재 워킹 피벗 Z, 그래도 없으면 오브젝트 로컬 Z로 폴백.
+fn pzd_computeAxis obj isPoly lvl = (
+    if isPoly then (
+        local faces = case lvl of (
+            1: (polyop.getFacesUsingVert obj (polyop.getVertSelection obj))
+            2: (polyop.getFacesUsingEdge obj (polyop.getEdgeSelection obj))
+            3: (polyop.getFacesUsingEdge obj (polyop.getEdgeSelection obj))
+            4: (polyop.getFaceSelection obj)
+            5: (polyop.getFaceSelection obj)
+            default: #{}
+        )
+        local n = [0,0,0]
+        for f in faces do n += polyop.getFaceNormal obj f      -- 객체공간 법선 합
+        if (length n) > 1e-6 do (
+            local wtm = obj.objecttransform                    -- 객체->월드
+            return normalize ((normalize n) * wtm - wtm.row4)  -- 방향만 월드로 변환
+        )
+    )
     local tm = undefined
-    try (
-        toolMode.coordsys #working_pivot              -- 좌표계를 워킹 피벗으로 전환(자동)
-        tm = WorkingPivot.getTM()                     -- 워킹 피벗 변환(월드)
-    ) catch ()
-    if tm == undefined do tm = pzd_obj.transform      -- 폴백: 오브젝트 로컬 축
-    normalize (tm.row3)                               -- row3 = Z축
+    try ( tm = WorkingPivot.getTM() ) catch ()
+    if tm == undefined do tm = obj.transform
+    normalize tm.row3
 )
 
 -- 현재 서브오브젝트 레벨에서 "영향받는 버텍스" 집합(비트배열)을 구함.
@@ -106,7 +132,15 @@ fn pzd_onStart sender args = (
         pzd_center = c / pzd_orig.count
 
         pzd_normal = normalize ((inverse (viewport.getTM())).row3)   -- 화면 평면 법선(시선)
-        pzd_axis   = pzd_moveAxis()                                  -- 이동축 = 워킹 피벗 Z
+        pzd_axis   = pzd_computeAxis pzd_obj pzd_isPoly lvl          -- 이동축 = 선택 법선(월드)
+
+        -- 워킹 피벗을 그 법선 방향으로 정렬하고, 좌표계를 워킹 피벗으로 전환.
+        -- 현재 좌표계는 저장해 두었다가 드래그가 끝나면 복원한다.
+        pzd_prevCoord = try (getRefCoordSys()) catch (#world)
+        try (
+            WorkingPivot.setTM (pzd_tmFromZ pzd_axis pzd_center)
+            toolMode.coordsys #working_pivot
+        ) catch ()
 
         pzd_offset = [args.X, args.Y] - mouse.pos                    -- 데스크톱->뷰포트 보정
         pzd_startLocal = [args.X, args.Y] - pzd_offset
@@ -145,6 +179,8 @@ fn pzd_onEnd sender args = (
             redrawViews()
         )
     ) catch ( format "pivotZDrag: commit failed: %\n" (getCurrentException()) )
+    -- 좌표계를 드래그 전 상태로 복원
+    if pzd_prevCoord != undefined do ( try ( toolMode.coordsys pzd_prevCoord ) catch () )
 )
 
 -- ===========================================================================

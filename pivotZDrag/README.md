@@ -11,10 +11,15 @@ id and macro.
 
 When an **Editable Poly / Editable Mesh** is in a **sub-object level**
 (Vertex / Edge / Border / Polygon / Element), holding **Ctrl+Shift** and
-dragging with the **middle mouse button** moves the selection along the
-**Working Pivot's Z axis** (world `WorkingPivot.getTM()` row 3). If no working
-pivot is set, it falls back to the **object's local Z**. Edges and faces are
-moved by moving the vertices they use.
+dragging with the **middle mouse button** pushes/pulls the selection along its
+**surface normal**. Edges and faces are moved by moving the vertices they use.
+
+On drag start it computes the selection's average face normal (in world space),
+aligns the **Working Pivot** Z to it, and switches the coordinate system to
+**Working Pivot** — so you don't have to run a pivot-snap tool first. When the
+drag ends, the **original coordinate system is restored**. If a normal can't be
+found (isolated verts / mesh), it falls back to the current Working Pivot Z, then
+the object's local Z.
 
 Align the Working Pivot Z to a surface normal first (e.g. with a pivot-snap
 tool) and this becomes "push/pull along the normal".
