@@ -1,16 +1,17 @@
-// ShiftVertexHook.cs
-// Standalone global mouse hook for "Shift + middle-drag = move selected verts
-// in screen space" in 3ds Max. Compiled at runtime by shiftVertexDrag.ms.
+// PivotZHook.cs
+// Standalone global mouse hook for "Ctrl+Shift + middle-drag = move selected
+// verts along the Working Pivot's Z axis" in 3ds Max. Compiled at runtime by
+// pivotZDrag.ms.
 //
-// This is fully self-contained (no marking menu, no UI). It:
+// Self-contained (no UI, no marking menu, independent of maxMouse and
+// shiftVertexDrag). It:
 //   * installs a WH_MOUSE_LL hook, acting only while 3ds Max is foreground;
-//   * when Armed (set by MAXScript: editable poly/mesh in vertex level) and the
-//     modifier (Shift) is held, swallows the middle button down/up so the
-//     viewport does not pan, and streams the drag to MAXScript;
-//   * dispatches drag start/move/end through a message-only window via
-//     PostMessage (normal priority, self-coalescing) so it stays smooth and
-//     never runs MAXScript re-entrantly inside the hook callback.
-// The middle button alone (no Shift) and the left button are never touched.
+//   * when Armed (editable poly/mesh in vertex level) and the modifier set is
+//     EXACTLY Ctrl+Shift, swallows the middle button down/up (no pan) and
+//     streams the drag to MAXScript via a message-only window (PostMessage,
+//     self-coalescing) for smooth, non-re-entrant dispatch.
+// The middle button alone, Shift-only, and the left button are all untouched
+// (exact modifier match -> never collides with a Shift-only tool).
 //
 // Kept to C# 3 language features so it compiles on every 3ds Max version.
 
@@ -18,7 +19,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
-namespace ShiftVertexMove
+namespace PivotZMove
 {
     public class PointEventArgs : EventArgs
     {
@@ -27,7 +28,7 @@ namespace ShiftVertexMove
         public PointEventArgs(int x, int y) { X = x; Y = y; }
     }
 
-    // a message-only window that receives the posted drag messages on the UI thread
+    // message-only window: receives the posted drag messages on the UI thread
     class MsgSink : NativeWindow
     {
         public const int WM_VSTART = 0x8000 + 1;   // WM_APP range
@@ -53,7 +54,7 @@ namespace ShiftVertexMove
         public void Close() { try { DestroyHandle(); } catch { } }
     }
 
-    public class VertexDragHook
+    public class PivotZDragHook
     {
         private const int WH_MOUSE_LL    = 14;
         private const int WM_MOUSEMOVE   = 0x0200;
@@ -89,8 +90,8 @@ namespace ShiftVertexMove
         private static extern bool PostMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
 
         // ---- configuration (set from MAXScript) ----
-        public bool Armed { get; set; }     // editable poly/mesh in vertex level
-        public int  Modifier { get; set; }  // 0=none, 1=Ctrl, 2=Alt, 3=Shift
+        public bool Armed { get; set; }       // editable poly/mesh in vertex level
+        public int  Modifiers { get; set; }   // EXACT bitmask: 1=Ctrl, 2=Alt, 4=Shift
 
         private IntPtr _hookId = IntPtr.Zero;
         private LowLevelMouseProc _proc;
@@ -104,10 +105,10 @@ namespace ShiftVertexMove
         public event EventHandler<PointEventArgs> VertexDragMove;
         public event EventHandler<EventArgs>      VertexDragEnd;
 
-        public VertexDragHook()
+        public PivotZDragHook()
         {
             Armed = false;
-            Modifier = 3;   // Shift + middle by default
+            Modifiers = 1 | 4;   // Ctrl + Shift by default
             _ourPid = System.Diagnostics.Process.GetCurrentProcess().Id;
         }
 
@@ -141,20 +142,15 @@ namespace ShiftVertexMove
             _vDrag = false;
         }
 
-        // exact match: the held modifier set must equal exactly the configured
-        // one, so e.g. Ctrl+Shift does NOT also trigger this Shift-only tool
-        private bool ModifierDown()
+        // require the held modifier set to EXACTLY equal Modifiers, so e.g.
+        // Ctrl+Shift does not also trigger a Shift-only tool
+        private bool ModifiersMatch()
         {
-            bool ctrl  = (GetAsyncKeyState(0x11) & 0x8000) != 0;
-            bool alt   = (GetAsyncKeyState(0x12) & 0x8000) != 0;
-            bool shift = (GetAsyncKeyState(0x10) & 0x8000) != 0;
-            switch (Modifier)
-            {
-                case 1:  return ctrl  && !alt  && !shift; // Ctrl only
-                case 2:  return alt   && !ctrl && !shift; // Alt only
-                case 3:  return shift && !ctrl && !alt;   // Shift only
-                default: return !ctrl && !alt  && !shift; // no modifier
-            }
+            int cur = 0;
+            if ((GetAsyncKeyState(0x11) & 0x8000) != 0) cur |= 1; // Ctrl
+            if ((GetAsyncKeyState(0x12) & 0x8000) != 0) cur |= 2; // Alt
+            if ((GetAsyncKeyState(0x10) & 0x8000) != 0) cur |= 4; // Shift
+            return cur == Modifiers;
         }
 
         private bool MaxForeground()
@@ -177,7 +173,7 @@ namespace ShiftVertexMove
                     int px = data.pt.x, py = data.pt.y;
                     if (msg == WM_MBUTTONDOWN)
                     {
-                        if (Armed && ModifierDown())
+                        if (Armed && ModifiersMatch())
                         {
                             _vDrag = true; _vMovePosted = false;
                             _vStartX = px; _vStartY = py; _vCurX = px; _vCurY = py;
