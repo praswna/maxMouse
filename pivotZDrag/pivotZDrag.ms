@@ -6,6 +6,7 @@
     버텍스들)가 "워킹 피벗(Working Pivot)의 Z축" 방향으로 이동합니다.
     (엣지/페이스는 그 구성 버텍스를 옮기는 방식)
 
+    - 드래그 시작 시 활성 좌표계를 "워킹 피벗"으로 자동 전환합니다.
     - 워킹 피벗 Z축을 표면 법선에 맞춰두면(예: 피벗 스냅 도구), 곧 "법선 방향
       밀어내기/집어넣기"가 됩니다. 워킹 피벗이 없으면 오브젝트 로컬 Z로 폴백.
     - 드래그는 "화면 평면 이동량을 그 축에 투영"해서 적용합니다. 즉 축이 화면에
@@ -48,10 +49,16 @@ fn pzd_planePt p = (
     else ( local t = (dot (pzd_center - r.pos) pzd_normal) / denom; r.pos + t * r.dir )
 )
 
--- 이동축(월드) 구하기: 워킹 피벗 Z축, 실패하면 오브젝트 로컬 Z축으로 폴백
+-- 이동축(월드) 구하기.
+--   먼저 활성 좌표계를 "워킹 피벗"으로 자동 전환한 뒤(사용자 기대 동작) 그 TM의
+--   Z축을 사용한다. 워킹 피벗을 활성화해야 getTM 이 실제 워킹 피벗 변환을 돌려준다.
+--   실패/미설정이면 오브젝트 로컬 Z축으로 폴백.
 fn pzd_moveAxis = (
     local tm = undefined
-    try ( tm = WorkingPivot.getTM() ) catch ()       -- 워킹 피벗 변환(월드)
+    try (
+        toolMode.coordsys #working_pivot              -- 좌표계를 워킹 피벗으로 전환(자동)
+        tm = WorkingPivot.getTM()                     -- 워킹 피벗 변환(월드)
+    ) catch ()
     if tm == undefined do tm = pzd_obj.transform      -- 폴백: 오브젝트 로컬 축
     normalize (tm.row3)                               -- row3 = Z축
 )
