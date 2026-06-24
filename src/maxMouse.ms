@@ -2,21 +2,22 @@
     --------------------------------------------------------------------------
     RIGHT button : Maya-style MARKING MENU whose contents change with the
         current sub-object level (Object / Vertex / Edge / Polygon).
-        Press & hold, a radial menu of 8 items (with icons) appears after a
-        short delay; flick toward a slice and release to run it. Flick fast
-        (release before the menu shows) to run it without seeing the menu. A
-        plain right-click still opens the normal quad menu.
+        Hold, a radial menu of 8 icons appears after a short delay; flick toward
+        a slice and release to run it. Fast flick = run without showing the
+        menu. A plain right-click still opens the normal quad menu.
 
-    MIDDLE button: screen-space VERTEX MOVE. When an Editable Poly / Mesh is in
-        Vertex sub-object level with a vertex selection, a middle-button drag
-        moves the selected verts along the screen plane (no pan). Otherwise the
-        middle button pans as usual.
+    MIDDLE button: screen-space VERTEX MOVE (Editable Poly/Mesh, vertex level,
+        with a selection). Otherwise the middle button pans normally.
+
+    The menus are editable from a GUI:  maxMouse_editor()  (or the "maxMouse
+    Editor" macro). Edits can be applied live and saved to an INI so they
+    persist between sessions.
 
     Requires the companion file  MaxMouse_GestureHook.cs  next to this script,
     and (optionally) PNG icons in ../icons/. To install/run: evaluate this file
-    (Scripting > Run Script, or drag it into a viewport). It compiles the hook,
-    starts immediately, and registers a macro "maxMouse Toggle" (category:
-    maxMouse).
+    (Scripting > Run Script). It compiles the hook, loads any saved menu config,
+    starts immediately, and registers the "maxMouse Toggle" / "maxMouse Editor"
+    macros (category: maxMouse).
     --------------------------------------------------------------------------
 */
 
@@ -27,10 +28,12 @@ global maxMouse_armTimer
 global maxMouse_iconDir
 global mm_menu_object, mm_menu_vertex, mm_menu_edge, mm_menu_face
 global mm_lastMenuKey
+global mm_actions, mm_actionIds, mm_actionNames
 
 -- ===========================================================================
 --  GENERAL ACTIONS  (object level)
 -- ===========================================================================
+fn mm_noop          = ( )
 fn mm_undo          = ( max undo )
 fn mm_redo          = ( max redo )
 fn mm_delete        = ( local s = getCurrentSelection(); if s.count > 0 do ( with undo "maxMouse Delete" on ( delete s ) ) )
@@ -40,13 +43,8 @@ fn mm_unhideAll     = ( max unhide all )
 fn mm_toggleWire    = ( if (viewport.GetRenderLevel() == #wireframe) then viewport.SetRenderLevel #smoothhighlights else viewport.SetRenderLevel #wireframe; redrawViews() )
 fn mm_toggleEdged   = ( viewport.setShowEdgeFaces (not (viewport.getShowEdgeFaces())); redrawViews() )
 
--- ---------------------------------------------------------------------------
---  Sub-object operations via the EditablePoly interface buttonOp (same as the
---  command-panel buttons: they act on the current sub-object selection using
---  the object's current settings). Edit the enums to taste.
---  NOTE: buttonOp requires an Editable Poly base object. Editable Mesh isn't
---  supported here (a message is printed); convert to Editable Poly if needed.
--- ---------------------------------------------------------------------------
+-- Sub-object operations via the EditablePoly buttonOp interface (same as the
+-- command-panel buttons; act on the current selection/settings).
 fn mm_bop op = (
     local o = (if selection.count == 1 then selection[1] else undefined)
     if o == undefined do ( format "maxMouse: select a single object first.\n"; return false )
@@ -55,8 +53,6 @@ fn mm_bop op = (
         format "maxMouse: '%' needs an Editable Poly (current base: %).\n" op (classof b)
         return false
     )
-    -- the EditablePoly mixin interface is reachable from the node or its base
-    -- object depending on version; try both before giving up.
     try ( with undo (op as string) on ( o.buttonOp op ); redrawViews() )
     catch (
         try ( with undo (op as string) on ( b.buttonOp op ); redrawViews() )
@@ -80,53 +76,114 @@ fn mm_op_detach   = ( mm_bop #Detach )
 fn mm_op_delete   = ( mm_bop #Delete )
 
 -- ===========================================================================
---  PER-LEVEL MARKING MENUS
---    slice order is clockwise from the top: N, NE, E, SE, S, SW, W, NW
---    each entry is #( "label", actionFn, "iconName" )  (icon = ../icons/<name>.png)
---    Undo/Redo are kept on W/E in every menu for muscle memory.
+--  ACTION REGISTRY   #( id, "Display Name", function )
+--  The menus and the GUI editor refer to actions by id; add your own here.
+-- ===========================================================================
+fn mm_buildActions = (
+    mm_actions = #(
+        #("none",      "(empty)",            mm_noop),
+        #("undo",      "Undo",               mm_undo),
+        #("redo",      "Redo",               mm_redo),
+        #("delete",    "Delete (objects)",   mm_delete),
+        #("zoomSel",   "Zoom Extents Sel",   mm_zoomExtSel),
+        #("hide",      "Hide Selection",     mm_hideSel),
+        #("unhideAll", "Unhide All",         mm_unhideAll),
+        #("wire",      "Toggle Wireframe",   mm_toggleWire),
+        #("edged",     "Toggle Edged Faces", mm_toggleEdged),
+        #("weld",      "Weld",               mm_op_weldV),
+        #("break",     "Break Vertices",     mm_op_break),
+        #("connectV",  "Connect Vertices",   mm_op_connectV),
+        #("connectE",  "Connect Edges",      mm_op_connectE),
+        #("chamfer",   "Chamfer",            mm_op_chamfer),
+        #("remove",    "Remove",             mm_op_remove),
+        #("collapse",  "Collapse",           mm_op_collapse),
+        #("cut",       "Cut",                mm_op_cut),
+        #("split",     "Split Edges",        mm_op_split),
+        #("extrude",   "Extrude",            mm_op_extrude),
+        #("bevel",     "Bevel",              mm_op_bevel),
+        #("inset",     "Inset",              mm_op_inset),
+        #("detach",    "Detach",             mm_op_detach),
+        #("subDelete", "Delete (sub-obj)",   mm_op_delete)
+    )
+    mm_actionIds   = for a in mm_actions collect a[1]
+    mm_actionNames = for a in mm_actions collect a[2]
+)
+
+fn mm_actionFn id = (
+    local r = mm_noop
+    for a in mm_actions while (r == mm_noop) where a[1] == id do r = a[3]
+    r
+)
+fn mm_indexOfId id = (
+    local n = findItem mm_actionIds id
+    if n == 0 then (findItem mm_actionIds "none") else n
+)
+
+-- ===========================================================================
+--  PER-LEVEL MARKING MENUS  (defaults)
+--    slice order clockwise from top: N, NE, E, SE, S, SW, W, NW
+--    each entry is #( "label", "actionId", "iconName" )
 -- ===========================================================================
 fn mm_buildMenus = (
     mm_menu_object = #(
-        #("Zoom Sel",   mm_zoomExtSel,  "zoom"),      -- N
-        #("Wireframe",  mm_toggleWire,  "wireframe"), -- NE
-        #("Redo",       mm_redo,        "redo"),      -- E
-        #("Hide",       mm_hideSel,     "hide"),      -- SE
-        #("Delete",     mm_delete,      "delete"),    -- S
-        #("Unhide All", mm_unhideAll,   "unhide"),    -- SW
-        #("Undo",       mm_undo,        "undo"),      -- W
-        #("Edged",      mm_toggleEdged, "edged")      -- NW
+        #("Zoom Sel",   "zoomSel",  "zoom"),
+        #("Wireframe",  "wire",     "wireframe"),
+        #("Redo",       "redo",     "redo"),
+        #("Hide",       "hide",     "hide"),
+        #("Delete",     "delete",   "delete"),
+        #("Unhide All", "unhideAll","unhide"),
+        #("Undo",       "undo",     "undo"),
+        #("Edged",      "edged",    "edged")
     )
     mm_menu_vertex = #(
-        #("Weld",       mm_op_weldV,    "weld"),      -- N
-        #("Connect",    mm_op_connectV, "connect"),   -- NE
-        #("Redo",       mm_redo,        "redo"),      -- E
-        #("Chamfer",    mm_op_chamfer,  "chamfer"),   -- SE
-        #("Remove",     mm_op_remove,   "remove"),    -- S
-        #("Collapse",   mm_op_collapse, "collapse"),  -- SW
-        #("Undo",       mm_undo,        "undo"),      -- W
-        #("Break",      mm_op_break,    "break")      -- NW
+        #("Weld",       "weld",     "weld"),
+        #("Connect",    "connectV", "connect"),
+        #("Redo",       "redo",     "redo"),
+        #("Chamfer",    "chamfer",  "chamfer"),
+        #("Remove",     "remove",   "remove"),
+        #("Collapse",   "collapse", "collapse"),
+        #("Undo",       "undo",     "undo"),
+        #("Break",      "break",    "break")
     )
     mm_menu_edge = #(
-        #("Connect",    mm_op_connectE, "connect"),   -- N
-        #("Chamfer",    mm_op_chamfer,  "chamfer"),   -- NE
-        #("Redo",       mm_redo,        "redo"),      -- E
-        #("Collapse",   mm_op_collapse, "collapse"),  -- SE
-        #("Remove",     mm_op_remove,   "remove"),    -- S
-        #("Cut",        mm_op_cut,      "cut"),       -- SW
-        #("Undo",       mm_undo,        "undo"),      -- W
-        #("Split",      mm_op_split,    "cut")        -- NW
+        #("Connect",    "connectE", "connect"),
+        #("Chamfer",    "chamfer",  "chamfer"),
+        #("Redo",       "redo",     "redo"),
+        #("Collapse",   "collapse", "collapse"),
+        #("Remove",     "remove",   "remove"),
+        #("Cut",        "cut",      "cut"),
+        #("Undo",       "undo",     "undo"),
+        #("Split",      "split",    "cut")
     )
     mm_menu_face = #(
-        #("Extrude",    mm_op_extrude,  "extrude"),   -- N
-        #("Bevel",      mm_op_bevel,    "bevel"),     -- NE
-        #("Redo",       mm_redo,        "redo"),      -- E
-        #("Inset",      mm_op_inset,    "inset"),     -- SE
-        #("Delete",     mm_op_delete,   "delete"),    -- S
-        #("Collapse",   mm_op_collapse, "collapse"),  -- SW
-        #("Undo",       mm_undo,        "undo"),      -- W
-        #("Detach",     mm_op_detach,   "detach")     -- NW
+        #("Extrude",    "extrude",  "extrude"),
+        #("Bevel",      "bevel",    "bevel"),
+        #("Redo",       "redo",     "redo"),
+        #("Inset",      "inset",    "inset"),
+        #("Delete",     "subDelete","delete"),
+        #("Collapse",   "collapse", "collapse"),
+        #("Undo",       "undo",     "undo"),
+        #("Detach",     "detach",   "detach")
     )
 )
+
+fn mm_getMenu key = (
+    case key of (
+        #vertex: mm_menu_vertex
+        #edge:   mm_menu_edge
+        #face:   mm_menu_face
+        default: mm_menu_object
+    )
+)
+fn mm_setMenu key menu = (
+    case key of (
+        #vertex: mm_menu_vertex = menu
+        #edge:   mm_menu_edge   = menu
+        #face:   mm_menu_face   = menu
+        default: mm_menu_object = menu
+    )
+)
+fn mm_menuFor key = mm_getMenu key
 
 fn mm_iconPath name = (
     if name == undefined or name == "" or maxMouse_iconDir == undefined then ""
@@ -144,13 +201,70 @@ fn mm_setActiveMenu menu = (
 fn mm_onMenuSelect sender args = (
     local i = args.Index
     if (i >= 0 and i < maxMouse_menu.count) do (
-        try ( maxMouse_menu[i + 1][2]() )
-        catch ( format "maxMouse: menu action error (slice %): %\n" i (getCurrentException()) )
+        local id = maxMouse_menu[i + 1][2]
+        try ( (mm_actionFn id)() )
+        catch ( format "maxMouse: menu action error (slice %, id %): %\n" i id (getCurrentException()) )
     )
 )
 
 -- ===========================================================================
---  CURRENT SUB-OBJECT LEVEL  ->  menu key
+--  CONFIG  (persist menus to <plugcfg>/maxMouse/menus.ini)
+-- ===========================================================================
+fn mm_configPath = (
+    local d = (getDir #plugcfg) + "\\maxMouse\\"
+    makeDir d all:true
+    d + "menus.ini"
+)
+fn mmSplitPipe s = (    -- split on '|' preserving empty fields
+    local res = #(); local cur = ""
+    for i = 1 to s.count do ( local c = s[i]; if c == "|" then ( append res cur; cur = "" ) else cur += c )
+    append res cur
+    res
+)
+fn mm_saveConfig = (
+    local p = mm_configPath()
+    for key in #(#object, #vertex, #edge, #face) do (
+        local sec = key as string
+        local menu = mm_getMenu key
+        for k = 1 to menu.count do (
+            local e = menu[k]
+            setINISetting p sec ((k - 1) as string) (e[1] + "|" + e[2] + "|" + e[3])
+        )
+    )
+    format "maxMouse: menus saved to %\n" p
+)
+fn mm_loadConfig = (
+    local p = mm_configPath()
+    if not (doesFileExist p) do return false
+    for key in #(#object, #vertex, #edge, #face) do (
+        local sec = key as string
+        local def = mm_getMenu key
+        local menu = #()
+        for k = 0 to 7 do (
+            local v = getINISetting p sec (k as string)
+            if v != "" then (
+                local parts = mmSplitPipe v
+                local label = if parts.count >= 1 then parts[1] else ""
+                local id    = if parts.count >= 2 then parts[2] else "none"
+                local icon  = if parts.count >= 3 then parts[3] else ""
+                append menu #(label, id, icon)
+            ) else (
+                if (k + 1) <= def.count then append menu def[k + 1] else append menu #("", "none", "")
+            )
+        )
+        mm_setMenu key menu
+    )
+    true
+)
+
+-- push the (possibly edited) menus to the live hook
+fn mm_applyMenus = (
+    mm_lastMenuKey = undefined
+    if (maxMouse_hook != undefined and maxMouse_hook.IsRunning) do mm_poll()
+)
+
+-- ===========================================================================
+--  CURRENT SUB-OBJECT LEVEL -> menu key ; POLL keeps things in sync
 -- ===========================================================================
 fn mm_currentLevel = (
     local o = (if selection.count == 1 then selection[1] else undefined)
@@ -164,20 +278,28 @@ fn mm_currentLevel = (
     case lvl of (
         1: #vertex
         2: #edge
-        3: (if isPoly then #edge else #face)   -- poly border ~ edge menu, mesh face
+        3: (if isPoly then #edge else #face)
         4: #face
         5: #face
         default: #object
     )
 )
 
-fn mm_menuFor key = (
-    case key of (
-        #vertex: mm_menu_vertex
-        #edge:   mm_menu_edge
-        #face:   mm_menu_face
-        default: mm_menu_object
+fn mm_poll = (
+    if maxMouse_hook == undefined do return false
+    local key = mm_currentLevel()
+
+    local armed = false
+    if key == #vertex and selection.count == 1 do (
+        local o = selection[1]; local b = o.baseObject
+        try (
+            if (classof b == Editable_Poly) do armed = ((polyop.getVertSelection o).numberSet > 0)
+            if (classof b == Editable_Mesh) do armed = ((getVertSelection o).numberSet > 0)
+        ) catch ( armed = false )
     )
+    maxMouse_hook.VertexMoveArmed = armed
+
+    if key != mm_lastMenuKey do ( mm_lastMenuKey = key; mm_setActiveMenu (mm_menuFor key) )
 )
 
 -- ===========================================================================
@@ -257,25 +379,109 @@ fn mmv_onEnd sender args = (
 )
 
 -- ===========================================================================
---  POLL  (every 200ms): keep the active menu + middle-button arming in sync
+--  GUI MENU EDITOR
 -- ===========================================================================
-fn mm_poll = (
-    if maxMouse_hook == undefined do return false
-    local key = mm_currentLevel()
+fn mm_iconList = (
+    local names = #()
+    if maxMouse_iconDir != undefined do
+        for f in (getFiles (maxMouse_iconDir + "*.png")) do append names (getFilenameFile f)
+    names
+)
 
-    -- arm the middle button only for a vertex selection
-    local armed = false
-    if key == #vertex and selection.count == 1 do (
-        local o = selection[1]; local b = o.baseObject
-        try (
-            if (classof b == Editable_Poly) do armed = ((polyop.getVertSelection o).numberSet > 0)
-            if (classof b == Editable_Mesh) do armed = ((getVertSelection o).numberSet > 0)
-        ) catch ( armed = false )
+rollout maxMouseEditorRoll "maxMouse - Marking Menu Editor" width:476
+(
+    local levelKeys = #(#object, #vertex, #edge, #face)
+    local dirNames  = #("N (up)", "NE", "E", "SE", "S", "SW", "W", "NW")
+    local iconNames = #()
+    local rEdit = #(), rAct = #(), rIcon = #()
+    local curIdx = 1
+
+    dropdownlist ddLevel "Sub-object level" items:#("Object", "Vertex", "Edge", "Polygon") width:200 align:#left across:2
+    label lblHint "edit -> Apply (live) -> Save" align:#right
+
+    label l1 "N (up)" align:#left across:4 offset:[0,4]
+    edittext et1 "" width:104 fieldWidth:104
+    dropdownlist da1 width:150
+    dropdownlist di1 width:96
+    label l2 "NE" align:#left across:4
+    edittext et2 "" width:104 fieldWidth:104
+    dropdownlist da2 width:150
+    dropdownlist di2 width:96
+    label l3 "E" align:#left across:4
+    edittext et3 "" width:104 fieldWidth:104
+    dropdownlist da3 width:150
+    dropdownlist di3 width:96
+    label l4 "SE" align:#left across:4
+    edittext et4 "" width:104 fieldWidth:104
+    dropdownlist da4 width:150
+    dropdownlist di4 width:96
+    label l5 "S" align:#left across:4
+    edittext et5 "" width:104 fieldWidth:104
+    dropdownlist da5 width:150
+    dropdownlist di5 width:96
+    label l6 "SW" align:#left across:4
+    edittext et6 "" width:104 fieldWidth:104
+    dropdownlist da6 width:150
+    dropdownlist di6 width:96
+    label l7 "W" align:#left across:4
+    edittext et7 "" width:104 fieldWidth:104
+    dropdownlist da7 width:150
+    dropdownlist di7 width:96
+    label l8 "NW" align:#left across:4
+    edittext et8 "" width:104 fieldWidth:104
+    dropdownlist da8 width:150
+    dropdownlist di8 width:96
+
+    button btnApply "Apply (live)" width:108 across:4 offset:[0,6]
+    button btnSave  "Save" width:96 offset:[0,6]
+    button btnReset "Reset defaults" width:130 offset:[0,6]
+    button btnClose "Close" width:96 offset:[0,6]
+
+    fn iconSelFor name = (
+        if name == "" or name == undefined then 1
+        else ( local n = findItem iconNames name; if n == 0 then 1 else n + 1 )
     )
-    maxMouse_hook.VertexMoveArmed = armed
+    fn loadLevel idx = (
+        local menu = mm_getMenu levelKeys[idx]
+        for k = 1 to 8 do (
+            local e = if k <= menu.count then menu[k] else #("", "none", "")
+            rEdit[k].text = e[1]
+            rAct[k].selection  = mm_indexOfId e[2]
+            rIcon[k].selection = iconSelFor e[3]
+        )
+    )
+    fn readLevel idx = (
+        local menu = #()
+        for k = 1 to 8 do (
+            local label = rEdit[k].text
+            local id    = mm_actionIds[rAct[k].selection]
+            local icon  = if rIcon[k].selection <= 1 then "" else iconNames[rIcon[k].selection - 1]
+            append menu #(label, id, icon)
+        )
+        mm_setMenu levelKeys[idx] menu
+    )
 
-    -- switch the marking menu when the level changes
-    if key != mm_lastMenuKey do ( mm_lastMenuKey = key; mm_setActiveMenu (mm_menuFor key) )
+    on maxMouseEditorRoll open do (
+        rEdit = #(et1,et2,et3,et4,et5,et6,et7,et8)
+        rAct  = #(da1,da2,da3,da4,da5,da6,da7,da8)
+        rIcon = #(di1,di2,di3,di4,di5,di6,di7,di8)
+        iconNames = mm_iconList()
+        local iconItems = #("(none)"); join iconItems iconNames
+        for k = 1 to 8 do ( rAct[k].items = mm_actionNames; rIcon[k].items = iconItems )
+        curIdx = ddLevel.selection
+        loadLevel curIdx
+    )
+    on ddLevel selected i do ( readLevel curIdx; curIdx = i; loadLevel curIdx )
+    on btnApply pressed do ( readLevel curIdx; mm_applyMenus(); format "maxMouse: menus applied.\n" )
+    on btnSave  pressed do ( readLevel curIdx; mm_applyMenus(); mm_saveConfig() )
+    on btnReset pressed do ( mm_buildMenus(); loadLevel curIdx; mm_applyMenus(); format "maxMouse: menus reset to defaults (not yet saved).\n" )
+    on btnClose pressed do ( try ( destroyDialog maxMouseEditorRoll ) catch () )
+)
+
+fn maxMouse_editor = (
+    if maxMouse_hook == undefined do ( format "maxMouse: start maxMouse first (run the script).\n"; return false )
+    try ( destroyDialog maxMouseEditorRoll ) catch ()
+    createDialog maxMouseEditorRoll
 )
 
 -- ===========================================================================
@@ -329,14 +535,16 @@ fn maxMouse_start = (
         return false
     )
     mm_compile()
-    mm_buildMenus()
     maxMouse_iconDir = (mm_thisDir()) + @"..\icons\"   -- src/ -> ../icons/
+    mm_buildActions()
+    mm_buildMenus()
+    mm_loadConfig()                                    -- override defaults with saved menus
 
     local t = maxMouse_asm.GetType "MaxMouse.GestureHook"
     maxMouse_hook = (dotNetClass "System.Activator").CreateInstance t
     maxMouse_hook.EnableRightMenu = true
-    maxMouse_hook.PopupDelayMs    = 160      -- ms to hold before the radial menu shows
-    maxMouse_hook.DeadZone        = 14       -- px; flick shorter than this = cancel/plain click
+    maxMouse_hook.PopupDelayMs    = 160
+    maxMouse_hook.DeadZone        = 14
 
     dotNet.addEventHandler maxMouse_hook "MarkingMenuSelected" mm_onMenuSelect
     dotNet.addEventHandler maxMouse_hook "VertexDragStart"     mmv_onStart
@@ -352,6 +560,7 @@ fn maxMouse_start = (
     callbacks.addScript #preSystemShutdown "if (maxMouse_stop != undefined) do maxMouse_stop()" id:#maxMouse
 
     format "maxMouse: started (right = level-aware marking menu, middle = vertex move).\n"
+    format "          edit menus with  maxMouse_editor()  or the 'maxMouse Editor' macro.\n"
     true
 )
 
@@ -367,15 +576,15 @@ fn maxMouse_toggle = (
 )
 
 -- ===========================================================================
---  TOOLBAR MACRO  (Customize > Toolbars, category "maxMouse")
+--  TOOLBAR MACROS  (Customize > Toolbars, category "maxMouse")
 -- ===========================================================================
 macroScript maxMouse_Toggle
-    category:"maxMouse"
-    buttontext:"maxMouse"
-    tooltip:"Toggle maxMouse gestures on/off"
-(
-    on execute do ( if (maxMouse_toggle != undefined) do maxMouse_toggle() )
-)
+    category:"maxMouse" buttontext:"maxMouse" tooltip:"Toggle maxMouse gestures on/off"
+( on execute do ( if (maxMouse_toggle != undefined) do maxMouse_toggle() ) )
+
+macroScript maxMouse_Editor
+    category:"maxMouse" buttontext:"maxMouse Editor" tooltip:"Edit maxMouse marking menus"
+( on execute do ( if (maxMouse_editor != undefined) do maxMouse_editor() ) )
 
 -- start now
 try ( maxMouse_start() )

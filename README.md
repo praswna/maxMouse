@@ -95,21 +95,31 @@ If an icon file is missing, the slice shows just its label.
 
 ---
 
-## Customizing
+## Customizing the menus (GUI editor)
 
-Open `src/maxMouse.ms`:
+Run `maxMouse_editor()` in the Listener, or use the **maxMouse Editor** macro
+(Customize > Toolbars, category *maxMouse*). The dialog lets you:
 
-- **Marking menus:** edit `mm_buildMenus` — there are four arrays
-  (`mm_menu_object/vertex/edge/face`), each the 8 slices in order
-  `N, NE, E, SE, S, SW, W, NW`, each entry `#("Label", actionFn, "iconName")`.
-  Add a `fn mm_myAction = ( ... )` near the top (or a `mm_bop #SomeEnum`
-  wrapper for an Editable Poly command) and reference it.
-- **Level → menu mapping:** `mm_currentLevel` / `mm_menuFor`.
-- **Icons:** put `<iconName>.png` in `icons/`.
-- **Timing / feel:** in `maxMouse_start()` change `PopupDelayMs` (hold time
-  before the menu appears) and `DeadZone` (px a flick must travel to count).
+- Pick the **sub-object level** (Object / Vertex / Edge / Polygon).
+- For each of the 8 directions, set the **label**, choose an **action** from a
+  dropdown, and pick an **icon**.
+- **Apply (live)** to try it immediately, **Save** to write it to
+  `…/plugcfg/maxMouse/menus.ini` so it persists between sessions, or
+  **Reset defaults**.
 
-Re-run `maxMouse.ms` after editing.
+Saved menus are loaded automatically on the next start.
+
+### Adding your own actions
+
+Actions shown in the editor come from the **action registry** in
+`src/maxMouse.ms` (`mm_buildActions`), a list of `#("id", "Display Name", fn)`.
+Add a `fn mm_myAction = ( ... )` (or a `mm_bop #SomeEnum` wrapper for an
+Editable Poly command), register it in `mm_buildActions`, and re-run the
+script — it then appears in the editor's action dropdown.
+
+Other knobs: **icons** are `icons/<name>.png`; **level → menu mapping** is in
+`mm_currentLevel` / `mm_menuFor`; **timing/feel** (`PopupDelayMs`, `DeadZone`)
+is in `maxMouse_start()`. Re-run `maxMouse.ms` after editing code.
 
 ---
 
