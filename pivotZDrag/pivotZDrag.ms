@@ -38,6 +38,16 @@ global pzd_norm                      -- 각 버텍스의 월드 법선 배열(se
 global pzd_amt                       -- 이동량(스칼라): 각 버텍스가 자기 법선으로 amt 만큼
 global pzd_prevCoord                 -- 드래그 전 좌표계(끝나면 복원)
 global pzd_prevPivotTM               -- 드래그 전 워킹 피벗 TM(끝나면 복원, 비파괴)
+global pzd_switched                  -- 좌표계/피벗을 바꿨고 아직 복원 안 했는지
+
+-- 좌표계/워킹 피벗을 드래그 전 상태로 복원 (전환했을 때만)
+fn pzd_restoreCoord = (
+    if pzd_switched == true do (
+        if pzd_prevPivotTM != undefined do ( try ( WorkingPivot.setTM pzd_prevPivotTM ) catch () )
+        if pzd_prevCoord  != undefined do ( try ( toolMode.coordsys pzd_prevCoord ) catch () )
+        pzd_switched = false
+    )
+)
 
 -- ===========================================================================
 --  버텍스 이동 (월드 좌표 기반, Poly/Mesh 분기)
@@ -128,6 +138,7 @@ fn pzd_gatherVerts obj isPoly lvl = (
 -- [드래그 시작] 선택 서브오브젝트의 버텍스 원위치/중심/시선법선/이동축 등을 저장
 fn pzd_onStart sender args = (
     pzd_ok = false
+    pzd_switched = false
     try (
         if selection.count != 1 do return false
         pzd_obj = selection[1]
@@ -164,6 +175,7 @@ fn pzd_onStart sender args = (
         try (
             WorkingPivot.setTM (pzd_tmFromZ avgWorld pzd_center)
             toolMode.coordsys #working_pivot
+            pzd_switched = true
         ) catch ()
 
         pzd_offset = [args.X, args.Y] - mouse.pos                    -- 데스크톱->뷰포트 보정
@@ -171,7 +183,11 @@ fn pzd_onStart sender args = (
         pzd_startWorld = pzd_planePt pzd_startLocal                  -- 시작점 투영(고정)
         pzd_amt = 0.0
         pzd_ok = true
-    ) catch ( format "pivotZDrag: start failed: %\n" (getCurrentException()); pzd_ok = false )
+    ) catch (
+        format "pivotZDrag: start failed: %\n" (getCurrentException())
+        pzd_ok = false
+        pzd_restoreCoord()    -- 전환 후 예외 시 좌표계가 갇히지 않도록 복원
+    )
 )
 
 -- 화면 평면 월드 드래그 d 를 로컬 방향으로 변환 후 평균 법선에 투영 -> 스칼라 amt
@@ -209,9 +225,7 @@ fn pzd_onEnd sender args = (
             redrawViews()
         )
     ) catch ( format "pivotZDrag: commit failed: %\n" (getCurrentException()) )
-    -- 워킹 피벗 TM 과 좌표계를 드래그 전 상태로 복원(비파괴)
-    if pzd_prevPivotTM != undefined do ( try ( WorkingPivot.setTM pzd_prevPivotTM ) catch () )
-    if pzd_prevCoord != undefined do ( try ( toolMode.coordsys pzd_prevCoord ) catch () )
+    pzd_restoreCoord()    -- 워킹 피벗 TM/좌표계를 드래그 전 상태로 복원(비파괴)
 )
 
 -- ===========================================================================
@@ -294,7 +308,7 @@ fn pivotZDrag_start = (
     callbacks.addScript #preSystemShutdown "if (pivotZDrag_stop != undefined) do pivotZDrag_stop()" id:#pivotZDrag
     pzd_poll()
 
-    format "pivotZDrag: started (Ctrl+Shift + middle-drag moves verts along Working Pivot Z).\n"
+    format "pivotZDrag: started (Ctrl+Shift + middle-drag moves verts along their surface normals).\n"
     true
 )
 
