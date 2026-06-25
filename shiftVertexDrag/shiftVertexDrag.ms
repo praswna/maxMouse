@@ -26,7 +26,7 @@
 -- [전역변수] 핸들/상태를 세션 동안 보존 (GC 방지 + 이벤트 핸들러 간 공유)
 global svm_hook                 -- C# 후크 인스턴스
 global svm_asm                  -- 컴파일된 어셈블리
-global svm_obj, svm_isPoly, svm_meshCopy, svm_sel, svm_orig
+global svm_obj, svm_isPoly, svm_meshCopy, svm_sel, svm_selBA, svm_orig
 global svm_center, svm_normal, svm_offset, svm_startLocal, svm_startWorld, svm_delta, svm_ok
 global svm_held                 -- theHold(undo) 를 열어두었는지
 
@@ -105,7 +105,8 @@ fn svm_onStart sender args = (
         -- 현재 레벨(버텍스/엣지/페이스)에서 영향받는 버텍스 집합을 모음
         local lvl = try (subobjectLevel) catch (1)
         if lvl == undefined do lvl = 1
-        svm_sel = (svm_gatherVerts svm_obj svm_isPoly lvl) as array
+        svm_selBA = svm_gatherVerts svm_obj svm_isPoly lvl   -- bitArray (Poly 일괄 setVert용)
+        svm_sel   = svm_selBA as array                       -- 같은 오름차순 순서 (orig/posArr 정렬 일치)
         if svm_sel.count == 0 do return false               -- 옮길 버텍스 없으면 무동작
 
         -- 원위치(월드) 저장 + 중심점 계산
@@ -139,8 +140,14 @@ fn svm_onMove sender args = (
     try (
         local cur = [args.X, args.Y] - svm_offset           -- 데스크톱 -> 뷰포트 좌표
         svm_delta = (svm_planePt cur) - svm_startWorld       -- 월드 이동량
-        for k = 1 to svm_sel.count do svm_setWorld svm_sel[k] (svm_orig[k] + svm_delta)
-        svm_commit()
+        if svm_isPoly then (
+            -- Poly: 모든 선택 버텍스를 월드좌표 배열로 만들어 "한 번에" 설정(개별 N회 호출 제거)
+            local posArr = for k = 1 to svm_sel.count collect (svm_orig[k] + svm_delta)
+            polyop.setVert svm_obj svm_selBA posArr node:svm_obj
+        ) else (
+            for k = 1 to svm_sel.count do svm_setWorld svm_sel[k] (svm_orig[k] + svm_delta)
+            svm_commit()
+        )
         redrawViews()
     ) catch ( format "shiftVertexDrag: move failed: %\n" (getCurrentException()) )
 )
