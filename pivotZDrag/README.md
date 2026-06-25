@@ -9,9 +9,9 @@ id and macro.
 
 ## What it does
 
-When an **Editable Poly / Editable Mesh** is in a **sub-object level**
-(Vertex / Edge / Border / Polygon / Element), holding **Ctrl+Shift** and
-dragging with the **middle mouse button** moves each selected vertex along
+When an **Editable Poly** (Editable Mesh is **not** supported) is in a
+**sub-object level** (Vertex / Edge / Border / Polygon / Element), holding
+**Ctrl+Shift** and dragging with the **middle mouse button** moves each selected vertex along
 **its own surface normal** by the same distance (a normal offset / inflate).
 With a multi-selection every vertex goes its own way; selecting a face or edge
 moves the vertices it uses, each along its own normal — the selection looks
@@ -63,12 +63,15 @@ tool) and this becomes "push/pull along the normal".
 
 ## Notes & caveats
 
-- Editable **Poly** is solid; Editable **Mesh** is best-effort/slower. Modifiers
-  (Edit Poly/Mesh) are not handled — operates on the base object.
+- **Editable Poly only.** Editable Mesh is not supported (convert to Editable
+  Poly). Edit Poly modifier is not handled either — it operates on the base
+  Editable Poly object.
+- Vertex writes use one batched `polyOp.setVert <poly> <bitArray> <pos_array>`
+  call per move (fast on large selections).
 - Uses the **active viewport** for screen↔world mapping; drag in the active
   viewport.
-- Uses `WorkingPivot.getTM()` Z. If the working pivot is identity/unset, the
-  axis falls back to the object's local Z.
+- Per-vertex normal = sum of the normals of the faces using that vertex
+  (computed once at drag start, in local space).
 - Coexists with `shiftVertexDrag` (Shift only) because the modifier match is
   exact — but make sure that tool also uses exact matching (it does as of the
   matching update) so Ctrl+Shift doesn't trigger both.

@@ -1,7 +1,7 @@
-/*  pivotZDrag - "Ctrl+Shift + 휠(중간버튼) 드래그 = 워킹 피벗 Z축으로 버텍스 이동"
+/*  pivotZDrag - "Ctrl+Shift + 휠(중간버튼) 드래그 = 각 버텍스를 자기 표면 법선으로 이동" (Editable Poly 전용)
     ==========================================================================
-    [개요]
-    Editable Poly / Editable Mesh 가 버텍스/엣지/페이스 등 서브오브젝트 레벨일 때,
+    [개요]  ※ Editable Poly 전용 (Editable Mesh 미지원)
+    Editable Poly 가 버텍스/엣지/페이스 등 서브오브젝트 레벨일 때,
     CTRL+SHIFT 를 누른 채 중간(휠) 버튼으로 드래그하면, 선택된 버텍스들이
     "각자 자기 자신의 법선 방향"으로 같은 거리만큼 이동합니다(노멀 방향 오프셋/
     인플레이트). 다중 선택이면 버텍스마다 서로 다른 방향으로 움직입니다.
@@ -32,7 +32,7 @@
 
 global pzd_hook
 global pzd_asm
-global pzd_obj, pzd_isPoly, pzd_meshCopy, pzd_sel, pzd_selBA, pzd_orig
+global pzd_obj, pzd_sel, pzd_selBA, pzd_orig
 global pzd_center, pzd_normal, pzd_axis, pzd_offset, pzd_startLocal, pzd_startWorld, pzd_ok
 global pzd_invOTM                    -- inverse(objecttransform) 캐시 (드래그 중 불변)
 global pzd_norm                      -- 각 버텍스의 월드 법선 배열(sel 과 같은 순서)
@@ -51,27 +51,10 @@ fn pzd_restoreCoord = (
 )
 
 -- ===========================================================================
---  버텍스 이동 (월드 좌표 기반, Poly/Mesh 분기)
+--  버텍스 get (Editable Poly 전용; 이동은 로컬 공간, 중심/평면은 월드)
 -- ===========================================================================
-fn pzd_getWorld i = (
-    if pzd_isPoly then ( polyop.getVert pzd_obj i node:pzd_obj )
-    else ( (getVert pzd_meshCopy i) * pzd_obj.objecttransform )
-)
-fn pzd_setWorld i wp = (
-    if pzd_isPoly then ( polyop.setVert pzd_obj i wp node:pzd_obj )
-    else ( setVert pzd_meshCopy i (wp * (inverse pzd_obj.objecttransform)) )
-)
-fn pzd_commit = ( if not pzd_isPoly do ( pzd_obj.mesh = pzd_meshCopy; update pzd_obj.mesh ) )
-
--- 객체(로컬) 좌표 get/set (이동은 로컬 공간에서: 주신 스크립트와 동일하게 로컬 법선 사용)
-fn pzd_getObj i = (
-    if pzd_isPoly then ( polyop.getVert pzd_obj i )
-    else ( getVert pzd_meshCopy i )
-)
-fn pzd_setObj i p = (
-    if pzd_isPoly then ( polyop.setVert pzd_obj i p )
-    else ( setVert pzd_meshCopy i p )
-)
+fn pzd_getWorld i = ( polyop.getVert pzd_obj i node:pzd_obj )   -- 월드(중심/평면용)
+fn pzd_getObj   i = ( polyop.getVert pzd_obj i )                -- 로컬(원위치/이동용)
 
 -- 화면 좌표 p 를 "화면과 평행한 평면(선택중심 통과)" 위의 월드 좌표로 투영
 fn pzd_planePt p = (
@@ -90,49 +73,31 @@ fn pzd_tmFromZ zdir pos = (
     matrix3 x y z pos
 )
 
--- 각 버텍스의 "로컬(객체) 법선" 배열을 계산 (sel 과 같은 순서).
---   주신 스냅 스크립트와 동일: 그 버텍스를 쓰는 페이스들의 법선 합 -> 정규화.
---   polyop.getFaceNormal 은 로컬 공간을 반환하므로 변환하지 않고 그대로 사용한다.
---   Mesh: TriMesh 의 버텍스 노멀(getNormal, 로컬). 각 버텍스가 자기 법선을 가짐.
-fn pzd_vertNormals obj isPoly sel = (
+-- 각 버텍스의 "로컬(객체) 법선" 배열 (sel 순서). 주신 스냅 스크립트와 동일:
+--   그 버텍스를 쓰는 페이스들의 법선 합 -> 정규화.
+--   polyop.getFaceNormal 은 로컬 공간을 반환하므로 변환하지 않고 그대로 쓴다.
+fn pzd_vertNormals obj sel = (
     local norms = #()
-    if isPoly then (
-        for vi in sel do (
-            local faces = polyop.getFacesUsingVert obj #{vi}
-            local n = [0,0,0]
-            for f in faces do n += polyop.getFaceNormal obj f
-            if (length n) < 1e-9 do n = [0,0,1]
-            append norms (normalize n)
-        )
-    ) else (
-        local m = obj.mesh
-        for vi in sel do (
-            local n = [0,0,1]
-            try ( n = getNormal m vi ) catch ()
-            append norms (normalize n)
-        )
+    for vi in sel do (
+        local faces = polyop.getFacesUsingVert obj #{vi}
+        local n = [0,0,0]
+        for f in faces do n += polyop.getFaceNormal obj f
+        if (length n) < 1e-9 do n = [0,0,1]
+        append norms (normalize n)
     )
     norms
 )
 
 -- 현재 서브오브젝트 레벨에서 "영향받는 버텍스" 집합(비트배열)을 구함.
 --   1=버텍스 / 2=엣지·3=보더(엣지가 쓰는 버텍스) / 4=폴리곤·5=엘리먼트(페이스가 쓰는 버텍스)
-fn pzd_gatherVerts obj isPoly lvl = (
-    if isPoly then (
-        case lvl of (
-            1: (polyop.getVertSelection obj)
-            2: (polyop.getVertsUsingEdge obj (polyop.getEdgeSelection obj))
-            3: (polyop.getVertsUsingEdge obj (polyop.getEdgeSelection obj))
-            4: (polyop.getVertsUsingFace obj (polyop.getFaceSelection obj))
-            5: (polyop.getVertsUsingFace obj (polyop.getFaceSelection obj))
-            default: #{}
-        )
-    ) else (
-        case lvl of (
-            1: (getVertSelection obj)
-            2: (try (meshop.getVertsUsingEdge obj (getEdgeSelection obj)) catch (#{}))
-            default: (try (meshop.getVertsUsingFace obj (getFaceSelection obj)) catch (#{}))
-        )
+fn pzd_gatherVerts obj lvl = (
+    case lvl of (
+        1: (polyop.getVertSelection obj)
+        2: (polyop.getVertsUsingEdge obj (polyop.getEdgeSelection obj))
+        3: (polyop.getVertsUsingEdge obj (polyop.getEdgeSelection obj))
+        4: (polyop.getVertsUsingFace obj (polyop.getFaceSelection obj))
+        5: (polyop.getVertsUsingFace obj (polyop.getFaceSelection obj))
+        default: #{}
     )
 )
 
@@ -143,15 +108,11 @@ fn pzd_onStart sender args = (
     try (
         if selection.count != 1 do return false
         pzd_obj = selection[1]
-        local b = pzd_obj.baseObject
-        pzd_isPoly = (classof b == Editable_Poly)
-        local isMesh = (classof b == Editable_Mesh)
-        if not (pzd_isPoly or isMesh) do return false
+        if (classof pzd_obj.baseObject != Editable_Poly) do return false   -- Editable Poly 전용
 
-        pzd_meshCopy = if isMesh then pzd_obj.mesh else undefined
         local lvl = try (subobjectLevel) catch (1)
         if lvl == undefined do lvl = 1
-        pzd_selBA = pzd_gatherVerts pzd_obj pzd_isPoly lvl          -- bitArray (일괄 setVert용, 고성능)
+        pzd_selBA = pzd_gatherVerts pzd_obj lvl                     -- bitArray (일괄 setVert용, 고성능)
         pzd_sel = pzd_selBA as array
         if pzd_sel.count == 0 do return false
         pzd_invOTM = inverse pzd_obj.objecttransform               -- 1회만 (드래그 중 불변)
@@ -166,7 +127,7 @@ fn pzd_onStart sender args = (
         pzd_normal = normalize ((inverse (viewport.getTM())).row3)   -- 화면 평면 법선(시선)
 
         -- 각 버텍스의 "자기만의" 로컬 법선 + 평균(로컬) 법선
-        pzd_norm = pzd_vertNormals pzd_obj pzd_isPoly pzd_sel
+        pzd_norm = pzd_vertNormals pzd_obj pzd_sel
         local an = [0,0,0]; for nrm in pzd_norm do an += nrm
         pzd_axis = if (length an) > 1e-6 then (normalize an) else [0,0,1]   -- 로컬 평균 법선
 
@@ -202,16 +163,10 @@ fn pzd_amtFromDrag args = (
 )
 
 -- 각 버텍스를 (로컬 원위치 + amt x 자기 법선)으로 설정.
---   Poly: vertlist=bitArray + 위치 배열로 "한 번에" 설정(고성능, 루프/개별 notify 제거).
---   Mesh: TriMesh 는 일괄 배열을 안 받으므로 개별 set 후 commit(best-effort).
+--   vertlist=bitArray + 위치 배열로 "한 번에" 설정(고성능, 루프/개별 notify 제거).
 fn pzd_applyAmt amt = (
     local posArr = for k = 1 to pzd_sel.count collect (pzd_orig[k] + amt * pzd_norm[k])
-    if pzd_isPoly then (
-        polyop.setVert pzd_obj pzd_selBA posArr            -- 1회 호출
-    ) else (
-        for k = 1 to pzd_sel.count do setVert pzd_meshCopy pzd_sel[k] posArr[k]
-        pzd_commit()
-    )
+    polyop.setVert pzd_obj pzd_selBA posArr                -- 1회 호출
 )
 
 -- [드래그 중] 각 버텍스를 자기만의 로컬 법선 방향으로 amt 만큼 이동(노멀 오프셋/인플레이트)
@@ -248,8 +203,8 @@ fn pzd_poll = (
         local b = selection[1].baseObject
         local lvl = try (subobjectLevel) catch (0)
         if lvl == undefined do lvl = 0
-        -- 버텍스(1)/엣지(2)/보더(3)/폴리곤(4)/엘리먼트(5) 어느 레벨이든 무장
-        if (lvl >= 1 and lvl <= 5) do armed = (classof b == Editable_Poly or classof b == Editable_Mesh)
+        -- Editable Poly + 서브오브젝트 레벨(1~5)일 때만 무장
+        if (lvl >= 1 and lvl <= 5) do armed = (classof b == Editable_Poly)
     )
     pzd_hook.Armed = armed
 )
