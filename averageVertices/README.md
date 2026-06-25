@@ -33,12 +33,24 @@ To auto-load, `fileIn` the script from a file in your user `…/scripts/startup/
 
 ## Tuning
 
-Two globals (edit in the script or set from the Listener):
+You do **not** have to edit the script. Two ways to adjust the strength:
+
+1. **Settings window** — run `avgv_settings()` in the Listener, or use the
+   **Avg Verts Settings** macro (category *averageVertices*). It has spinners
+   for Iterations and Weight (and an *Apply now* button).
+2. **Listener** — set the globals directly: `avgv_weight = 0.5`,
+   `avgv_iterations = 3`.
+
+The two values:
 
 - `avgv_iterations` — relax passes per key press (default `1`). Higher = more
   smoothing in one press.
 - `avgv_weight` — `0..1`, how far each vertex moves toward its neighbour average
   (default `1.0` = move fully to the average; lower = gentler).
+
+Values are per-session (reset when 3ds Max restarts). To change the **startup
+default**, edit the two `avgv_iterations` / `avgv_weight` lines at the top of the
+script.
 
 ## Notes
 

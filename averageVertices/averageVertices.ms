@@ -96,5 +96,36 @@ macroScript Average_Vertices
     on execute do ( if (avgv_run != undefined) do avgv_run() )
 )
 
+-- ===========================================================================
+--  설정 창 (강도 조절을 스크립트 수정 없이 스피너로)
+-- ===========================================================================
+rollout avgvSettingsRoll "Average Vertices" width:210
+(
+    spinner spnIter   "Iterations:" range:[1,100,1]      type:#integer fieldWidth:55 align:#right
+    spinner spnWeight "Weight:"     range:[0.0,1.0,1.0]  type:#float scale:0.05 fieldWidth:55 align:#right
+    button  btnApply  "Apply now"   width:190 align:#center offset:[0,4]
+    label   lblHint   "(또는 지정한 단축키로 실행)" align:#center
+
+    on avgvSettingsRoll open do ( spnIter.value = avgv_iterations; spnWeight.value = avgv_weight )
+    on spnIter   changed v do avgv_iterations = v
+    on spnWeight changed v do avgv_weight = v
+    on btnApply  pressed   do ( if (avgv_run != undefined) do avgv_run() )
+)
+
+fn avgv_settings = (
+    try ( destroyDialog avgvSettingsRoll ) catch ()
+    createDialog avgvSettingsRoll
+)
+
+macroScript Average_Vertices_Settings
+    category:"averageVertices"
+    buttontext:"Avg Verts Settings"
+    tooltip:"Average Vertices 강도(반복/가중치) 설정 창"
+(
+    on execute do ( if (avgv_settings != undefined) do avgv_settings() )
+)
+
 format "averageVertices: 준비됨. Customize 에서 'Average Vertices'(카테고리 averageVertices)에 단축키를 지정하세요.\n"
-format "                 강도 조절: avgv_iterations(반복), avgv_weight(0~1).\n"
+format "                 강도 조절: 리스너에서 avgv_iterations/avgv_weight 를 바꾸거나,\n"
+format "                 avgv_settings() (또는 'Avg Verts Settings' 매크로)로 설정 창을 여세요.\n"
+
