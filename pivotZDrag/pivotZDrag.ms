@@ -32,8 +32,9 @@
 
 global pzd_hook
 global pzd_asm
-global pzd_obj, pzd_isPoly, pzd_meshCopy, pzd_sel, pzd_orig
+global pzd_obj, pzd_isPoly, pzd_meshCopy, pzd_sel, pzd_selBA, pzd_orig
 global pzd_center, pzd_normal, pzd_axis, pzd_offset, pzd_startLocal, pzd_startWorld, pzd_ok
+global pzd_invOTM                    -- inverse(objecttransform) 캐시 (드래그 중 불변)
 global pzd_norm                      -- 각 버텍스의 월드 법선 배열(sel 과 같은 순서)
 global pzd_amt                       -- 이동량(스칼라): 각 버텍스가 자기 법선으로 amt 만큼
 global pzd_prevCoord                 -- 드래그 전 좌표계(끝나면 복원)
@@ -150,8 +151,10 @@ fn pzd_onStart sender args = (
         pzd_meshCopy = if isMesh then pzd_obj.mesh else undefined
         local lvl = try (subobjectLevel) catch (1)
         if lvl == undefined do lvl = 1
-        pzd_sel = (pzd_gatherVerts pzd_obj pzd_isPoly lvl) as array
+        pzd_selBA = pzd_gatherVerts pzd_obj pzd_isPoly lvl          -- bitArray (일괄 setVert용, 고성능)
+        pzd_sel = pzd_selBA as array
         if pzd_sel.count == 0 do return false
+        pzd_invOTM = inverse pzd_obj.objecttransform               -- 1회만 (드래그 중 불변)
 
         -- 위치: 이동은 로컬 공간에서 하므로 로컬 원위치를 저장.
         -- 중심/평면 투영은 월드가 필요하므로 월드 위치도 따로 구해 평균.
@@ -194,9 +197,21 @@ fn pzd_onStart sender args = (
 fn pzd_amtFromDrag args = (
     local cur = [args.X, args.Y] - pzd_offset
     local d   = (pzd_planePt cur) - pzd_startWorld        -- 월드 이동
-    local inv = inverse pzd_obj.objecttransform
-    local dObj = (d * inv) - inv.row4                      -- 월드 방향 -> 로컬 방향
+    local dObj = (d * pzd_invOTM) - pzd_invOTM.row4        -- 월드 방향 -> 로컬 방향(캐시된 inverse)
     dot dObj pzd_axis                                      -- 로컬 평균 법선에 투영
+)
+
+-- 각 버텍스를 (로컬 원위치 + amt x 자기 법선)으로 설정.
+--   Poly: vertlist=bitArray + 위치 배열로 "한 번에" 설정(고성능, 루프/개별 notify 제거).
+--   Mesh: TriMesh 는 일괄 배열을 안 받으므로 개별 set 후 commit(best-effort).
+fn pzd_applyAmt amt = (
+    local posArr = for k = 1 to pzd_sel.count collect (pzd_orig[k] + amt * pzd_norm[k])
+    if pzd_isPoly then (
+        polyop.setVert pzd_obj pzd_selBA posArr            -- 1회 호출
+    ) else (
+        for k = 1 to pzd_sel.count do setVert pzd_meshCopy pzd_sel[k] posArr[k]
+        pzd_commit()
+    )
 )
 
 -- [드래그 중] 각 버텍스를 자기만의 로컬 법선 방향으로 amt 만큼 이동(노멀 오프셋/인플레이트)
@@ -204,8 +219,7 @@ fn pzd_onMove sender args = (
     if not pzd_ok do return false
     try (
         pzd_amt = pzd_amtFromDrag args
-        for k = 1 to pzd_sel.count do pzd_setObj pzd_sel[k] (pzd_orig[k] + pzd_amt * pzd_norm[k])
-        pzd_commit()
+        pzd_applyAmt pzd_amt
         redrawViews()
     ) catch ( format "pivotZDrag: move failed: %\n" (getCurrentException()) )
 )
@@ -216,12 +230,8 @@ fn pzd_onEnd sender args = (
     pzd_ok = false
     try (
         if (abs pzd_amt) > 1e-6 do (
-            for k = 1 to pzd_sel.count do pzd_setObj pzd_sel[k] pzd_orig[k]
-            pzd_commit()
-            with undo "Move Verts (vertex normals)" on (
-                for k = 1 to pzd_sel.count do pzd_setObj pzd_sel[k] (pzd_orig[k] + pzd_amt * pzd_norm[k])
-                pzd_commit()
-            )
+            pzd_applyAmt 0.0                                         -- 원위치 복원(undo 없음)
+            with undo "Move Verts (vertex normals)" on ( pzd_applyAmt pzd_amt )
             redrawViews()
         )
     ) catch ( format "pivotZDrag: commit failed: %\n" (getCurrentException()) )
