@@ -23,28 +23,32 @@ bind your own hotkey.
 
 ## Install / run & assign a hotkey
 
-1. **Scripting > Run Script…** → `averageVertices.ms` (this registers the macro).
-2. **Customize > Hotkeys** (or Toolbars) → category **averageVertices** →
-   action **Average Vertices** → assign your shortcut.
+1. **Scripting > Run Script…** → `averageVertices.ms` (registers the macros).
+2. **Customize > Hotkeys** (or Toolbars) → category **averageVertices** → pick
+   one and assign your shortcut:
+   - **Average Vertices** — apply instantly with the current strength.
+   - **Average Vertices (Caddy)** — pop a small window next to the cursor to
+     tweak Weight/Iters with live preview, then OK/Cancel.
 3. Select an Editable Poly, enter a sub-object level, select verts/edges/faces,
-   and press the key. Press repeatedly to smooth more.
+   and press the key. (Instant version: press repeatedly to smooth more.)
 
 To auto-load, `fileIn` the script from a file in your user `…/scripts/startup/`.
 
 ## Tuning
 
-You do **not** have to edit the script. Two ways to adjust the strength:
+You do **not** have to edit the script. Ways to adjust the strength:
 
-1. **Settings window** — run `avgv_settings()` in the Listener, or use the
-   **Avg Verts Settings** macro (category *averageVertices*). It has spinners
-   for Iterations and Weight (and an *Apply now* button).
+1. **Caddy popup (near the cursor)** — bind the **Average Vertices (Caddy)**
+   macro (category *averageVertices*) or run `avgv_caddy()`. A small window
+   appears next to the cursor with **Weight** / **Iters** spinners and **live
+   preview**; **OK** confirms (one undo), **Cancel** reverts.
 2. **Listener** — set the globals directly: `avgv_weight = 0.5`,
-   `avgv_iterations = 3`.
+   `avgv_iterations = 3` (used by the instant **Average Vertices** macro).
 
 The two values:
 
-- `avgv_iterations` — relax passes per key press (default `1`). Higher = more
-  smoothing in one press.
+- `avgv_iterations` — relax passes per application (default `1`). Higher = more
+  smoothing at once.
 - `avgv_weight` — `0..1`, how far each vertex moves toward its neighbour average
   (default `1.0` = move fully to the average; lower = gentler).
 
