@@ -106,7 +106,6 @@ fn avgv_run = (
     catch ( okk = false; format "averageVertices: 적용 실패: %\n" (getCurrentException()) )
     if okk then ( theHold.Accept "Average Vertices" ) else ( theHold.Cancel() )
     redrawViews()
-    if okk do format "averageVertices: 버텍스 % 개, 반복 % 회 적용.\n" selArr.count avgv_iterations
     okk
 )
 
