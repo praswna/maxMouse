@@ -28,6 +28,7 @@ global svm_hook                 -- C# 후크 인스턴스
 global svm_asm                  -- 컴파일된 어셈블리
 global svm_obj, svm_isPoly, svm_meshCopy, svm_sel, svm_orig
 global svm_center, svm_normal, svm_offset, svm_startLocal, svm_startWorld, svm_delta, svm_ok
+global svm_held                 -- theHold(undo) 를 열어두었는지
 
 -- ===========================================================================
 --  버텍스 화면 평면 이동 (실제 계산부)
@@ -91,6 +92,7 @@ fn svm_gatherVerts obj isPoly lvl = (
 --   저장한다. 유효하지 않으면(객체 아님/선택 0개) svm_ok=false 로 두어 무시.
 fn svm_onStart sender args = (
     svm_ok = false
+    if svm_held == true do ( try ( theHold.Cancel() ) catch (); svm_held = false )   -- 이전 드래그 잔여 정리
     try (
         if selection.count != 1 do return false           -- 단일 선택만 지원
         svm_obj = selection[1]
@@ -119,8 +121,14 @@ fn svm_onStart sender args = (
         svm_startLocal = [args.X, args.Y] - svm_offset
         svm_startWorld = svm_planePt svm_startLocal         -- 시작점 투영 1회만 (드래그 내내 고정)
         svm_delta = [0,0,0]
+        theHold.Begin()                                     -- 드래그 전체를 하나의 Undo 로 묶음
+        svm_held = true
         svm_ok = true
-    ) catch ( format "shiftVertexDrag: start failed: %\n" (getCurrentException()); svm_ok = false )
+    ) catch (
+        format "shiftVertexDrag: start failed: %\n" (getCurrentException())
+        svm_ok = false
+        if svm_held == true do ( try ( theHold.Cancel() ) catch (); svm_held = false )
+    )
 )
 
 -- [드래그 중] 후크가 보낸 VertexDragMove 마다 호출.
@@ -138,22 +146,22 @@ fn svm_onMove sender args = (
 )
 
 -- [드래그 끝] VertexDragEnd 시 호출.
---   라이브 이동은 undo 없이 적용됐으므로: (1) 원위치로 되돌린 뒤
---   (2) undo 블록 안에서 최종 위치를 재적용 -> "한 번의 깨끗한 Undo" 생성.
+--   드래그 전체가 theHold 안에서 일어났으므로, 움직였으면 Accept(단일 Undo 생성),
+--   안 움직였으면 Cancel(빈 Undo 안 만듦).
 fn svm_onEnd sender args = (
     if not svm_ok do return false
     svm_ok = false
     try (
-        if (length svm_delta) > 1e-6 do (                    -- 실제로 움직였을 때만
-            for k = 1 to svm_sel.count do svm_setWorld svm_sel[k] svm_orig[k]   -- 원위치 복원(undo 없음)
-            svm_commit()
-            with undo "Move Verts (screen)" on (             -- 단일 Undo 로 재적용
-                for k = 1 to svm_sel.count do svm_setWorld svm_sel[k] (svm_orig[k] + svm_delta)
-                svm_commit()
-            )
-            redrawViews()
+        if svm_held == true do (
+            if (length svm_delta) > 1e-6 then theHold.Accept "Move Verts (screen)"
+            else theHold.Cancel()
+            svm_held = false
         )
-    ) catch ( format "shiftVertexDrag: commit failed: %\n" (getCurrentException()) )
+        redrawViews()
+    ) catch (
+        format "shiftVertexDrag: commit failed: %\n" (getCurrentException())
+        if svm_held == true do ( try ( theHold.Cancel() ) catch (); svm_held = false )
+    )
 )
 
 -- ===========================================================================
@@ -259,6 +267,7 @@ fn shiftVertexDrag_start = (
 -- [정지] 콜백 제거 + 후크 해제(후크 + 메시지 창 정리)
 fn shiftVertexDrag_stop = (
     callbacks.removeScripts id:#shiftVertexDrag
+    if svm_held == true do ( try ( theHold.Cancel() ) catch (); svm_held = false )   -- 열린 hold 정리
     if svm_hook != undefined do ( try ( svm_hook.Stop() ) catch (); svm_hook = undefined )
     format "shiftVertexDrag: stopped.\n"
 )
