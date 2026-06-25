@@ -243,17 +243,17 @@ fn avgv_caddy = (
 )
 
 -- ===========================================================================
---  매크로 (Customize > Hotkeys / Toolbars, 카테고리 averageVertices)
+--  매크로 (Customize > Hotkeys / Toolbars, 카테고리 #MyKUI)
 -- ===========================================================================
 macroScript Average_Vertices
-    category:"averageVertices" buttontext:"Average Vertices"
-    tooltip:"Average (relax) selected vertices - Maya style (instant)"
+    category:"#MyKUI"
+    tooltip:"Average Vertices"
 ( on execute do ( if (avgv_run != undefined) do avgv_run() ) )
 
 macroScript Average_Vertices_Caddy
-    category:"averageVertices" buttontext:"Average Vertices (Caddy)"
-    tooltip:"커서 옆 작은 창으로 Weight/Iters 실시간 조절"
+    category:"#MyKUI"
+    tooltip:"Average Vertices(Caddy)"
 ( on execute do ( if (avgv_caddy != undefined) do avgv_caddy() ) )
 
 format "averageVertices: 준비됨. Customize 에서 'Average Vertices' / 'Average Vertices (Caddy)'\n"
-format "                 (카테고리 averageVertices)에 단축키를 지정하세요.\n"
+format "                 (카테고리 #MyKUI)에 단축키를 지정하세요.\n"
