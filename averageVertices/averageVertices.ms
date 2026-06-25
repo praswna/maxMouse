@@ -49,21 +49,30 @@ fn avgv_neighborLists o selArr = (
     )
 )
 
--- 릴렉스 본체: 새 위치를 모두 "현재 위치"에서 먼저 계산 -> 일괄 적용(Jacobi), iters 회.
+-- 릴렉스 본체 (속도 최적화).
+--   관련 버텍스(선택+이웃) 위치를 1회만 getVert 로 스냅샷 -> 반복은 전부 배열 안에서
+--   계산(object I/O 없음) -> 마지막에 setVert 1회. Jacobi(이전 상태에서 계산).
 fn avgv_relaxN o selBA selArr nbrLists w iters = (
+    local involved = #{} + selBA                                      -- selBA 와 독립된 새 bitArray
+    for nbrs in nbrLists do for n in nbrs do involved[n] = true        -- 선택 + 모든 이웃
+    local nv = polyop.getNumVerts o
+    local pos = #(); pos[nv] = undefined                              -- 인덱스 접근용 배열
+    for vi in involved do pos[vi] = polyop.getVert o vi                -- 스냅샷 1회
+
     for iter = 1 to iters do (
-        local newPos = for k = 1 to selArr.count collect (
+        local newSel = for k = 1 to selArr.count collect (
             local nbrs = nbrLists[k]
-            if nbrs.count == 0 then ( polyop.getVert o selArr[k] )      -- 고립 버텍스: 유지
+            if nbrs.count == 0 then pos[selArr[k]]                     -- 고립 버텍스: 유지
             else (
                 local s = [0,0,0]
-                for n in nbrs do s += polyop.getVert o n
-                local orig = polyop.getVert o selArr[k]
-                orig + w * ((s / nbrs.count) - orig)                    -- weight 만큼 평균으로
+                for n in nbrs do s += pos[n]
+                local op = pos[selArr[k]]
+                op + w * ((s / nbrs.count) - op)                       -- weight 만큼 평균으로
             )
         )
-        polyop.setVert o selBA newPos                                  -- bitArray + 위치배열로 1회 일괄 적용
+        for k = 1 to selArr.count do pos[selArr[k]] = newSel[k]        -- 다음 반복용으로 배열에 기록
     )
+    polyop.setVert o selBA (for k = 1 to selArr.count collect pos[selArr[k]])   -- 1회 일괄 적용
 )
 
 -- ===========================================================================
@@ -147,32 +156,90 @@ fn avgv_caddyCancel = (
     )
 )
 
-rollout avgvCaddyRoll "Avg Verts" width:160
-(
-    spinner spnW "Weight" range:[0.0,1.0,1.0]  type:#float   scale:0.02 fieldWidth:48 align:#right
-    spinner spnI "Iters " range:[1,50,1]       type:#integer            fieldWidth:48 align:#right
-    button  bOK "OK" width:70 across:2 offset:[0,3]
-    button  bX  "Cancel" width:70 offset:[0,3]
+-- 테두리 없는 작은 창 + 마우스 드래그로 Weight 스크럽 (실시간 미리보기).
+--   좌클릭 드래그(좌우) = Weight 조절, 떼면 확정(단일 Undo).
+--   우클릭 / Esc = 취소,  Enter = 확정.
+global avgv_form, avgv_lbl, avgv_scrubbing, avgv_startX, avgv_startW
 
-    on avgvCaddyRoll open do (
-        spnW.value = avgv_weight
-        spnI.value = avgv_iterations
-        avgv_caddyPreview()        -- 현재 값으로 즉시 미리보기
+fn avgv_lblText = (
+    if avgv_lbl != undefined do (
+        local n = (avgv_weight * 12.0) as integer
+        local bar = ""
+        for i = 1 to 12 do bar += (if i <= n then "|" else ".")
+        avgv_lbl.Text = ("  W " + (formattedPrint avgv_weight format:".2f") + "  [" + bar + "]")
     )
-    on spnW changed v do ( avgv_weight = v;     avgv_caddyPreview() )
-    on spnI changed v do ( avgv_iterations = v; avgv_caddyPreview() )
-    on bOK pressed do ( avgv_caddyCommit(); try ( destroyDialog avgvCaddyRoll ) catch () )
-    on bX  pressed do ( avgv_caddyCancel(); try ( destroyDialog avgvCaddyRoll ) catch () )
-    on avgvCaddyRoll close do ( avgv_caddyCancel() )    -- 창 X 로 닫으면 취소
 )
 
--- 캐디를 "커서 옆"에 띄움
-fn avgv_caddy = (
-    if (avgv_caddyStart()) do (
-        local p = (dotNetClass "System.Windows.Forms.Control").MousePosition
-        try ( destroyDialog avgvCaddyRoll ) catch ()
-        createDialog avgvCaddyRoll pos:[(p.X + 14), (p.Y - 10)] style:#(#style_toolwindow, #style_sysmenu)
+fn avgv_scrubEnd doCommit = (
+    if avgv_form == undefined do return false
+    avgv_scrubbing = false
+    local f = avgv_form
+    avgv_form = undefined                 -- 재진입 방지
+    if doCommit then avgv_caddyCommit() else avgv_caddyCancel()
+    try ( f.Close() ) catch ()
+)
+
+fn avgv_onMD s e = (
+    if (e.Button.ToString() == "Right") then avgv_scrubEnd false
+    else (
+        avgv_scrubbing = true
+        avgv_startX = (dotNetClass "System.Windows.Forms.Control").MousePosition.X
+        avgv_startW = avgv_weight
+        try ( avgv_lbl.Capture = true ) catch ()
     )
+)
+fn avgv_onMM s e = (
+    if avgv_scrubbing == true do (
+        local sx = (dotNetClass "System.Windows.Forms.Control").MousePosition.X
+        avgv_weight = amax 0.0 (amin 1.0 (avgv_startW + (sx - avgv_startX) * 0.006))   -- ~170px=0..1
+        avgv_lblText()
+        avgv_caddyPreview()
+    )
+)
+fn avgv_onMU s e = (
+    if avgv_scrubbing == true do ( try ( avgv_lbl.Capture = false ) catch (); avgv_scrubEnd true )
+)
+fn avgv_onKey s e = (
+    local k = e.KeyCode.ToString()
+    if k == "Escape" then avgv_scrubEnd false
+    else if k == "Return" then avgv_scrubEnd true
+)
+
+-- 캐디를 "커서 옆"에 띄움 (테두리 없음)
+fn avgv_caddy = (
+    if not (avgv_caddyStart()) do return false
+    avgv_scrubbing = false
+
+    avgv_form = dotNetObject "System.Windows.Forms.Form"
+    avgv_form.FormBorderStyle = (dotNetClass "System.Windows.Forms.FormBorderStyle").None
+    avgv_form.StartPosition   = (dotNetClass "System.Windows.Forms.FormStartPosition").Manual
+    avgv_form.TopMost       = true
+    avgv_form.ShowInTaskbar = false
+    avgv_form.KeyPreview    = true
+    avgv_form.Width = 150; avgv_form.Height = 24
+    avgv_form.BackColor = (dotNetClass "System.Drawing.Color").FromArgb 40 40 44
+    local p = (dotNetClass "System.Windows.Forms.Control").MousePosition
+    avgv_form.Location = dotNetObject "System.Drawing.Point" (p.X + 12) (p.Y - 12)
+
+    avgv_lbl = dotNetObject "System.Windows.Forms.Label"
+    avgv_lbl.Dock      = (dotNetClass "System.Windows.Forms.DockStyle").Fill
+    avgv_lbl.TextAlign = (dotNetClass "System.Drawing.ContentAlignment").MiddleLeft
+    avgv_lbl.ForeColor = (dotNetClass "System.Drawing.Color").White
+    avgv_lbl.BackColor = (dotNetClass "System.Drawing.Color").FromArgb 40 40 44
+    avgv_lbl.Font      = dotNetObject "System.Drawing.Font" "Segoe UI" 9
+    avgv_lbl.Cursor    = (dotNetClass "System.Windows.Forms.Cursors").SizeWE
+    avgv_form.Controls.Add avgv_lbl
+
+    dotNet.addEventHandler avgv_lbl  "MouseDown" avgv_onMD
+    dotNet.addEventHandler avgv_lbl  "MouseMove" avgv_onMM
+    dotNet.addEventHandler avgv_lbl  "MouseUp"   avgv_onMU
+    dotNet.addEventHandler avgv_form "KeyDown"   avgv_onKey
+
+    avgv_lblText()
+    avgv_caddyPreview()       -- 현재 값으로 즉시 미리보기 (Show 전에 1회)
+    avgv_form.Show()
+    avgv_form.Activate()
+    true
 )
 
 -- ===========================================================================

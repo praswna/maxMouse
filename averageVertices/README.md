@@ -38,10 +38,11 @@ To auto-load, `fileIn` the script from a file in your user `…/scripts/startup/
 
 You do **not** have to edit the script. Ways to adjust the strength:
 
-1. **Caddy popup (near the cursor)** — bind the **Average Vertices (Caddy)**
-   macro (category *averageVertices*) or run `avgv_caddy()`. A small window
-   appears next to the cursor with **Weight** / **Iters** spinners and **live
-   preview**; **OK** confirms (one undo), **Cancel** reverts.
+1. **Caddy scrub (near the cursor)** — bind the **Average Vertices (Caddy)**
+   macro (category *averageVertices*) or run `avgv_caddy()`. A **borderless**
+   mini strip pops up at the cursor; **left-drag horizontally to scrub Weight**
+   with **live preview**. Release to confirm (one undo). **Right-click / Esc**
+   cancels, **Enter** confirms. (Iterations comes from `avgv_iterations`.)
 2. **Listener** — set the globals directly: `avgv_weight = 0.5`,
    `avgv_iterations = 3` (used by the instant **Average Vertices** macro).
 
