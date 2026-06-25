@@ -49,16 +49,20 @@ fn avgv_neighborLists o selArr = (
     )
 )
 
--- 릴렉스 본체 (속도 최적화).
---   관련 버텍스(선택+이웃) 위치를 1회만 getVert 로 스냅샷 -> 반복은 전부 배열 안에서
---   계산(object I/O 없음) -> 마지막에 setVert 1회. Jacobi(이전 상태에서 계산).
-fn avgv_relaxN o selBA selArr nbrLists w iters = (
+-- 관련 버텍스(선택+이웃) 위치 스냅샷. vertexIndex -> point3 (나머지는 undefined).
+fn avgv_snapBase o selBA nbrLists = (
     local involved = #{} + selBA                                      -- selBA 와 독립된 새 bitArray
     for nbrs in nbrLists do for n in nbrs do involved[n] = true        -- 선택 + 모든 이웃
     local nv = polyop.getNumVerts o
-    local pos = #(); pos[nv] = undefined                              -- 인덱스 접근용 배열
-    for vi in involved do pos[vi] = polyop.getVert o vi                -- 스냅샷 1회
+    local base = #(); base[nv] = undefined
+    for vi in involved do base[vi] = polyop.getVert o vi
+    base
+)
 
+-- 메모리 안에서 릴렉스 계산 (object 미접근, 빠름). basePos 는 스냅샷 배열.
+--   반복은 배열에서만, Jacobi(이전 상태에서 계산). 선택 버텍스의 최종 위치 배열을 반환.
+fn avgv_relaxCompute selArr nbrLists basePos w iters = (
+    local pos = copy basePos                                          -- basePos 보존(다음 미리보기용)
     for iter = 1 to iters do (
         local newSel = for k = 1 to selArr.count collect (
             local nbrs = nbrLists[k]
@@ -70,9 +74,15 @@ fn avgv_relaxN o selBA selArr nbrLists w iters = (
                 op + w * ((s / nbrs.count) - op)                       -- weight 만큼 평균으로
             )
         )
-        for k = 1 to selArr.count do pos[selArr[k]] = newSel[k]        -- 다음 반복용으로 배열에 기록
+        for k = 1 to selArr.count do pos[selArr[k]] = newSel[k]
     )
-    polyop.setVert o selBA (for k = 1 to selArr.count collect pos[selArr[k]])   -- 1회 일괄 적용
+    for k = 1 to selArr.count collect pos[selArr[k]]
+)
+
+-- 즉시용: object 에서 스냅샷 -> 계산 -> setVert 1회
+fn avgv_relaxN o selBA selArr nbrLists w iters = (
+    local base = avgv_snapBase o selBA nbrLists
+    polyop.setVert o selBA (avgv_relaxCompute selArr nbrLists base w iters)
 )
 
 -- ===========================================================================
@@ -103,7 +113,7 @@ fn avgv_run = (
 -- ===========================================================================
 --  캐디형 팝업 (커서 옆 작은 창, 실시간 미리보기)
 -- ===========================================================================
-global avgv_cO, avgv_cSelBA, avgv_cSelArr, avgv_cNbr, avgv_cOrig
+global avgv_cO, avgv_cSelBA, avgv_cSelArr, avgv_cNbr, avgv_cOrig, avgv_cBase
 
 -- 선택을 캡처하고 원본 위치를 스냅샷 (성공하면 true)
 fn avgv_caddyStart = (
@@ -121,16 +131,17 @@ fn avgv_caddyStart = (
     avgv_cSelBA = selBA
     avgv_cSelArr = selArr
     avgv_cNbr = avgv_neighborLists o selArr
-    avgv_cOrig = for vi in selArr collect (polyop.getVert o vi)        -- 원본 스냅샷
+    avgv_cOrig = for vi in selArr collect (polyop.getVert o vi)        -- 선택 버텍스 원본(취소 복원용)
+    avgv_cBase = avgv_snapBase o selBA avgv_cNbr                       -- 선택+이웃 원본 스냅샷(계산용, 1회)
     true
 )
 
--- 미리보기: 원본 복원 후 현재 값으로 릴렉스(undo 없음)
+-- 미리보기: 메모리 스냅샷에서 계산 -> setVert "1회"만 (원본 복원 단계 없음 = 깜박임 없음)
 fn avgv_caddyPreview = (
     if avgv_cO == undefined do return false
     try (
-        polyop.setVert avgv_cO avgv_cSelBA avgv_cOrig                  -- 원본 복원
-        avgv_relaxN avgv_cO avgv_cSelBA avgv_cSelArr avgv_cNbr avgv_weight avgv_iterations
+        local finalSel = avgv_relaxCompute avgv_cSelArr avgv_cNbr avgv_cBase avgv_weight avgv_iterations
+        polyop.setVert avgv_cO avgv_cSelBA finalSel
         redrawViews()
     ) catch ( format "averageVertices: preview 실패: %\n" (getCurrentException()) )
 )
@@ -139,9 +150,9 @@ fn avgv_caddyPreview = (
 fn avgv_caddyCommit = (
     if avgv_cO == undefined do return false
     try (
-        polyop.setVert avgv_cO avgv_cSelBA avgv_cOrig
+        polyop.setVert avgv_cO avgv_cSelBA avgv_cOrig                  -- undo 캡처 기준을 원본으로
         theHold.Begin()
-        avgv_relaxN avgv_cO avgv_cSelBA avgv_cSelArr avgv_cNbr avgv_weight avgv_iterations
+        polyop.setVert avgv_cO avgv_cSelBA (avgv_relaxCompute avgv_cSelArr avgv_cNbr avgv_cBase avgv_weight avgv_iterations)
         theHold.Accept "Average Vertices"
         redrawViews()
     ) catch ( try (theHold.Cancel()) catch (); format "averageVertices: 확정 실패: %\n" (getCurrentException()) )
@@ -207,6 +218,7 @@ fn avgv_onKey s e = (
 
 -- 캐디를 "커서 옆"에 띄움 (테두리 없음)
 fn avgv_caddy = (
+    if avgv_form != undefined do avgv_scrubEnd false        -- 이미 떠 있는 캐디 정리(중복 방지)
     if not (avgv_caddyStart()) do return false
     avgv_scrubbing = false
 
