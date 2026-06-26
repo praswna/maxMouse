@@ -200,13 +200,26 @@ fn avgv_caddyCancel = (
 --   좌클릭 드래그(좌우) = Weight 조절, 떼면 확정(단일 Undo).
 --   우클릭 / Esc = 취소,  Enter = 확정.
 global avgv_form, avgv_lbl, avgv_scrubbing, avgv_startX, avgv_startW
+global avgv_lastPrevW                 -- 마지막으로 미리보기한 weight (중복 갱신 방지)
+
+-- 컨트롤의 protected DoubleBuffered 속성을 reflection 으로 켬 (라벨 글자 깜박임 제거).
+--   라벨은 .Text 가 바뀔 때마다 배경을 지우고 다시 그려서 깜박이는데, 더블버퍼링이면
+--   오프스크린에 그린 뒤 한 번에 표시하므로 깜박임/가려짐이 사라진다.
+fn avgv_setDB ctrl = (
+    try (
+        local bf = dotNetClass "System.Reflection.BindingFlags"
+        local pi = ctrl.GetType().GetProperty "DoubleBuffered" (bf.Instance + bf.NonPublic)
+        if pi != undefined do pi.SetValue ctrl true
+    ) catch ()
+)
 
 fn avgv_lblText = (
     if avgv_lbl != undefined do (
         local n = (avgv_weight * 12.0) as integer
         local bar = ""
         for i = 1 to 12 do bar += (if i <= n then "|" else ".")
-        avgv_lbl.Text = ("  W " + (formattedPrint avgv_weight format:".2f") + "  [" + bar + "]")
+        local s = ("  W " + (formattedPrint avgv_weight format:".2f") + "  [" + bar + "]")
+        if avgv_lbl.Text != s do avgv_lbl.Text = s        -- 동일 문자열이면 다시 그리지 않음
     )
 )
 
@@ -232,8 +245,11 @@ fn avgv_onMM s e = (
     if avgv_scrubbing == true do (
         local sx = (dotNetClass "System.Windows.Forms.Control").MousePosition.X
         avgv_weight = amax 0.0 (amin 1.0 (avgv_startW + (sx - avgv_startX) * 0.006))   -- ~170px=0..1
-        avgv_lblText()
-        avgv_caddyPreview()
+        if avgv_weight != avgv_lastPrevW do (        -- 값이 실제로 바뀐 경우만 갱신(끝단 클램프 시 낭비 제거)
+            avgv_lastPrevW = avgv_weight
+            avgv_lblText()
+            avgv_caddyPreview()
+        )
     )
 )
 fn avgv_onMU s e = (
@@ -259,6 +275,7 @@ fn avgv_caddy = (
     avgv_form.KeyPreview    = true
     avgv_form.Width = 150; avgv_form.Height = 24
     avgv_form.BackColor = (dotNetClass "System.Drawing.Color").FromArgb 40 40 44
+    avgv_setDB avgv_form                       -- 폼 더블버퍼링(깜박임 방지)
     local p = (dotNetClass "System.Windows.Forms.Control").MousePosition
     avgv_form.Location = dotNetObject "System.Drawing.Point" (p.X + 12) (p.Y - 12)
 
@@ -270,6 +287,7 @@ fn avgv_caddy = (
     avgv_lbl.Font      = dotNetObject "System.Drawing.Font" "Segoe UI" 9
     avgv_lbl.Cursor    = (dotNetClass "System.Windows.Forms.Cursors").SizeWE
     avgv_form.Controls.Add avgv_lbl
+    avgv_setDB avgv_lbl                        -- 라벨 더블버퍼링(.Text 갱신 시 깜박임 제거)
 
     dotNet.addEventHandler avgv_lbl  "MouseDown" avgv_onMD
     dotNet.addEventHandler avgv_lbl  "MouseMove" avgv_onMM
@@ -278,6 +296,7 @@ fn avgv_caddy = (
 
     avgv_lblText()
     avgv_caddyPreview()       -- 현재 값으로 즉시 미리보기 (Show 전에 1회)
+    avgv_lastPrevW = avgv_weight              -- 이후 드래그에서 값이 바뀔 때만 갱신
     avgv_form.Show()
     avgv_form.Activate()
     true
