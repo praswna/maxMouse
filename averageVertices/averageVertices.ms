@@ -1,14 +1,15 @@
-/*  averageVertices - Maya 의 "Average Vertices" 를 3ds Max 에 구현 (Editable Poly)
+/*  averageVertices - 선택 버텍스를 이웃 평균으로 이동(릴렉스/스무딩) - 3ds Max (Editable Poly)
     ==========================================================================
     [개요]
     선택한 버텍스(또는 선택 엣지/페이스가 쓰는 버텍스)를 "이웃 버텍스들의 평균
     위치"로 이동시킵니다. = 릴렉스 / 라플라시안 스무딩. 반복할수록 더 매끄러워짐.
-    Maya 의 Mesh > Average Vertices 와 동일한 동작.
+    (선택 경계는 주변 메시로 자연스럽게 섞입니다.)
 
     실행 방법 2가지 (둘 다 매크로 등록 -> Customize 에서 단축키 지정):
       1) "Average Vertices"        - 누르면 즉시 1회 적용 (현재 강도값 사용)
-      2) "Average Vertices (Caddy)"- 커서 옆에 작은 창을 띄워 Weight/Iterations 를
-         스피너로 실시간 미리보기하며 조절, OK 로 확정(단일 Undo) / Cancel 로 취소
+      2) "Average Vertices (Caddy)"- 커서 옆에 테두리 없는 작은 띠를 띄워, 좌우로
+         드래그해 Weight 를 실시간 미리보기하며 조절. 떼면 확정(단일 Undo),
+         우클릭/Esc 취소, Enter 확정.
 
     [독립성] 다른 모듈과 무관. 전역 접두사 avgv_. C#/후크 없음(MAXScript만).
     [실행] Scripting > Run Script -> averageVertices.ms  (매크로 등록)

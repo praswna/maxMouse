@@ -4,8 +4,8 @@ A small collection of standalone **3ds Max** modeling tools (MAXScript, with
 runtime-compiled C# only where a global mouse hook is needed). Each tool lives
 in its own folder and is fully independent — run whichever you want.
 
-> The original Maya-style marking-menu gesture system has been removed; this
-> repo now holds the vertex tools below.
+> The original marking-menu gesture system has been removed; this repo now holds
+> the vertex tools below.
 
 ## Tools
 
@@ -13,7 +13,7 @@ in its own folder and is fully independent — run whichever you want.
 |--------|---------|--------------|
 | [`shiftVertexDrag/`](shiftVertexDrag/) | **Shift + middle-drag** | Move the selected verts (or the verts of selected edges/faces) along the **screen plane** while the viewport doesn't pan. |
 | [`pivotZDrag/`](pivotZDrag/) | **Ctrl+Shift + middle-drag** | Move each selected vertex along **its own surface normal** (per-vertex normal offset / inflate). Editable Poly only. |
-| [`averageVertices/`](averageVertices/) | **hotkey** (you assign) | Maya-style **Average Vertices** (relax / Laplacian smoothing) — instant macro or a cursor-side caddy popup with live preview. |
+| [`averageVertices/`](averageVertices/) | **hotkey** (you assign) | **Average / Relax Vertices** (relax / Laplacian smoothing) — instant macro or a cursor-side caddy popup with live preview. |
 
 Each folder has its own `README.md` with install, usage, and caveats.
 

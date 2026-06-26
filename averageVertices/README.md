@@ -1,11 +1,10 @@
 # averageVertices
 
-A **standalone** 3ds Max tool that reimplements Maya's **Average Vertices**
-(relax / Laplacian smoothing) for **Editable Poly**.
+A **standalone** 3ds Max tool: **Average / Relax Vertices** (relax / Laplacian
+smoothing) for **Editable Poly**.
 
 It moves each selected vertex toward the **average position of its connected
-neighbour vertices**. Repeat to smooth more — exactly like Maya's
-*Mesh > Average Vertices*.
+neighbour vertices**. Repeat to smooth more.
 
 Pure MAXScript — no C#, no mouse hook. It registers a **macroScript** so you can
 bind your own hotkey.
