@@ -208,8 +208,9 @@ global avgv_lastPrevW                 -- 마지막으로 미리보기한 weight 
 fn avgv_setDB ctrl = (
     try (
         local bf = dotNetClass "System.Reflection.BindingFlags"
+        local flags = dotNet.combineEnums bf.Instance bf.NonPublic    -- 안전한 플래그 결합(+ 보다 견고)
         local t  = ctrl.GetType()
-        local pi = t.GetProperty "DoubleBuffered" (bf.Instance + bf.NonPublic)
+        local pi = t.GetProperty "DoubleBuffered" flags
         if pi != undefined do pi.SetValue ctrl true
     ) catch ()
 )
@@ -268,7 +269,9 @@ fn avgv_caddy = (
     if not (avgv_caddyStart()) do return false
     avgv_scrubbing = false
 
-    avgv_form = dotNetObject "System.Windows.Forms.Form"
+    -- MaxForm 은 3ds Max 메인 윈도우에 소유(owned)되어 z-순서/리드로우 시 가려짐·깜박임이 줄어든다.
+    --   (구버전 등에서 없으면 일반 Form 으로 폴백)
+    avgv_form = try (dotNetObject "MaxCustomControls.MaxForm") catch (dotNetObject "System.Windows.Forms.Form")
     avgv_form.FormBorderStyle = (dotNetClass "System.Windows.Forms.FormBorderStyle").None
     avgv_form.StartPosition   = (dotNetClass "System.Windows.Forms.FormStartPosition").Manual
     avgv_form.TopMost       = true
