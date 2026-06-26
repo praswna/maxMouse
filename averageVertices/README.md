@@ -24,11 +24,12 @@ bind your own hotkey.
 ## Install / run & assign a hotkey
 
 1. **Scripting > Run Script…** → `averageVertices.ms` (registers the macros).
-2. **Customize > Hotkeys** (or Toolbars) → category **averageVertices** → pick
+2. **Customize > Hotkeys** (or Toolbars) → category **#MyKUI** → pick
    one and assign your shortcut:
    - **Average Vertices** — apply instantly with the current strength.
-   - **Average Vertices (Caddy)** — pop a small window next to the cursor to
-     tweak Weight/Iters with live preview, then OK/Cancel.
+   - **Average Vertices (Caddy)** — pop a tiny **borderless** strip next to the
+     cursor and **drag left/right to scrub the Weight** with live preview;
+     release to confirm (one undo).
 3. Select an Editable Poly, enter a sub-object level, select verts/edges/faces,
    and press the key. (Instant version: press repeatedly to smooth more.)
 
@@ -39,7 +40,7 @@ To auto-load, `fileIn` the script from a file in your user `…/scripts/startup/
 You do **not** have to edit the script. Ways to adjust the strength:
 
 1. **Caddy scrub (near the cursor)** — bind the **Average Vertices (Caddy)**
-   macro (category *averageVertices*) or run `avgv_caddy()`. A **borderless**
+   macro (category *#MyKUI*) or run `avgv_caddy()`. A **borderless**
    mini strip pops up at the cursor; **left-drag horizontally to scrub Weight**
    with **live preview**. Release to confirm (one undo). **Right-click / Esc**
    cancels, **Enter** confirms. (Iterations comes from `avgv_iterations`.)
@@ -65,4 +66,9 @@ script.
   selection blends into the surrounding mesh (it isn't pinned to only the
   selected set).
 - Isolated vertices (no connected edges) are left unchanged.
-- Windows/any 3ds Max with MAXScript (no platform-specific code here).
+- **Fast on repeats:** the neighbour topology and a vertex→selection index are
+  cached per (object, vertex count, selection), so pressing the key repeatedly on
+  the same selection skips re-gathering neighbours; the relax runs on a compact
+  per-selection array (no full-mesh copy). The cache refreshes when the object,
+  vertex count, or selection changes.
+- Any 3ds Max with MAXScript; the caddy uses .NET WinForms (Windows).

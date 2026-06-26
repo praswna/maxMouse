@@ -3,9 +3,10 @@
 A **standalone** 3ds Max tool: **Shift + middle-drag moves the selected
 vertices in screen space.**
 
-Self-contained and independent of `maxMouse` — its own runtime-compiled C#
-hook (namespace `ShiftVertexMove`), its own globals (`svm_*`), its own callback
-id and macro. You can run it on its own, or alongside maxMouse.
+Self-contained and independent — its own runtime-compiled C# hook (namespace
+`ShiftVertexMove`), its own globals (`svm_*`), its own callback id and macro. It
+coexists with `pivotZDrag` (Ctrl+Shift) because the modifier match is exact, so
+Shift-only never triggers both.
 
 ## What it does
 
@@ -33,7 +34,9 @@ moving the vertices they use. The viewport does **not** pan while Shift is held.
    never runs MAXScript re-entrantly inside the hook. Mouse moves are never
    swallowed (the cursor can't freeze).
 4. MAXScript projects the cursor onto the screen plane (`mapScreenToWorldRay`)
-   and moves each selected vert by the resulting world delta, live.
+   and moves the selection by the resulting world delta, live. Editable Poly
+   writes all verts in one batched `polyOp.setVert <bitArray> <pointlist> node:`
+   per move (fast on large selections); Editable Mesh uses a per-vert fallback.
 
 ## Install / run
 

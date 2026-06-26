@@ -32,7 +32,7 @@ tool) and this becomes "push/pull along the normal".
   axis-constrained gizmo drag).
 - Modifier match is **exact** (Ctrl+Shift only), so it never collides with a
   Shift-only tool. Middle alone pans; the left button is never touched.
-- The whole drag is one undo (`Move Verts (pivot Z)`).
+- The whole drag is one undo (`Move Verts (vertex normals)`, via `theHold`).
 
 ## How it works
 
@@ -45,9 +45,13 @@ tool) and this becomes "push/pull along the normal".
    middle down/up (no pan) and streams the drag through a **message-only window**
    (PostMessage, normal priority, self-coalescing) — smooth, never re-entrant,
    moves never swallowed (no cursor freeze).
-4. MAXScript reads the Working Pivot Z, projects the cursor onto a screen-plane
-   through the selection, takes the component along the axis, and moves each
-   selected vert by that amount — live, then committed as a single undo.
+4. MAXScript computes each vertex's **own local normal** (sum of the normals of
+   the faces using it) once at drag start, plus the **average** normal. It
+   projects the cursor onto a screen-plane through the selection, takes the
+   component along that average normal to get a scalar amount, and moves **each
+   vertex along its own normal** by that amount with one batched
+   `polyOp.setVert` — live, inside a single `theHold` undo. The Working Pivot is
+   aligned to the average normal for visual feedback and restored on release.
 
 ## Install / run
 

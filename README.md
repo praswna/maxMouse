@@ -34,4 +34,12 @@ Each folder has its own `README.md` with install, usage, and caveats.
 1. Keep each tool's files together in its folder.
 2. **Scripting > Run Script…** → the tool's `.ms`.
 3. Drag tools start immediately; `averageVertices` registers macros you assign
-   in **Customize > Hotkeys** (category `averageVertices`).
+   in **Customize > Hotkeys** (category `#MyKUI`).
+
+## Compatibility
+
+- **Windows only** (the drag tools use a Win32 `WH_MOUSE_LL` hook).
+- **Editable Poly** primarily (see per-tool notes); **Edit Poly / Edit Mesh
+  modifiers are not handled** — they operate on the base object.
+- The drag tools **runtime-compile their C# hook** with the .NET
+  `CSharpCodeProvider`. Test on your target 3ds Max version before relying on it.
