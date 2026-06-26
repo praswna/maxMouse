@@ -208,7 +208,8 @@ global avgv_lastPrevW                 -- 마지막으로 미리보기한 weight 
 fn avgv_setDB ctrl = (
     try (
         local bf = dotNetClass "System.Reflection.BindingFlags"
-        local pi = ctrl.GetType().GetProperty "DoubleBuffered" (bf.Instance + bf.NonPublic)
+        local t  = ctrl.GetType()
+        local pi = t.GetProperty "DoubleBuffered" (bf.Instance + bf.NonPublic)
         if pi != undefined do pi.SetValue ctrl true
     ) catch ()
 )
