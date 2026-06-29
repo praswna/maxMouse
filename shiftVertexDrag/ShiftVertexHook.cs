@@ -170,14 +170,22 @@ namespace ShiftVertexMove
         {
             if (nCode >= 0 && _sink != null)
             {
-                MSLLHOOKSTRUCT data = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
-                if (MaxForeground())
+                int msg = wParam.ToInt32();
+                // Fast reject BEFORE the struct marshal + foreground probe: this is a
+                // system-wide low-level hook fired for every mouse message, so do real
+                // work only for the three messages we use -- and a move/up only matters
+                // mid-drag, a middle-down only while armed. The common idle case (plain
+                // mouse moves, no drag) now costs just a couple of comparisons.
+                bool want = (msg == WM_MBUTTONDOWN && Armed)
+                         || (msg == WM_MBUTTONUP   && _vDrag)
+                         || (msg == WM_MOUSEMOVE   && _vDrag);
+                if (want && MaxForeground())
                 {
-                    int msg = wParam.ToInt32();
+                    MSLLHOOKSTRUCT data = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
                     int px = data.pt.x, py = data.pt.y;
                     if (msg == WM_MBUTTONDOWN)
                     {
-                        if (Armed && ModifierDown())
+                        if (ModifierDown())   // Armed already verified in `want`
                         {
                             _vDrag = true; _vMovePosted = false;
                             _vStartX = px; _vStartY = py; _vCurX = px; _vCurY = py;
@@ -187,24 +195,18 @@ namespace ShiftVertexMove
                     }
                     else if (msg == WM_MBUTTONUP)
                     {
-                        if (_vDrag)
-                        {
-                            _vCurX = px; _vCurY = py; _vDrag = false;
-                            PostMessage(_sink.Handle, MsgSink.WM_VEND, IntPtr.Zero, IntPtr.Zero);
-                            return (IntPtr)1;
-                        }
+                        // _vDrag already verified in `want`
+                        _vCurX = px; _vCurY = py; _vDrag = false;
+                        PostMessage(_sink.Handle, MsgSink.WM_VEND, IntPtr.Zero, IntPtr.Zero);
+                        return (IntPtr)1;
                     }
-                    else if (msg == WM_MOUSEMOVE)
+                    else   // WM_MOUSEMOVE, mid-drag; never swallow moves (cursor would freeze)
                     {
-                        // record only; never swallow moves (would freeze the cursor)
-                        if (_vDrag)
+                        _vCurX = px; _vCurY = py;
+                        if (!_vMovePosted)   // coalesce: one move in flight
                         {
-                            _vCurX = px; _vCurY = py;
-                            if (!_vMovePosted)   // coalesce: one move in flight
-                            {
-                                _vMovePosted = true;
-                                PostMessage(_sink.Handle, MsgSink.WM_VMOVE, IntPtr.Zero, IntPtr.Zero);
-                            }
+                            _vMovePosted = true;
+                            PostMessage(_sink.Handle, MsgSink.WM_VMOVE, IntPtr.Zero, IntPtr.Zero);
                         }
                     }
                 }
