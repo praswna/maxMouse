@@ -849,7 +849,10 @@ global twk_obj, twk_vidx, twk_orig
 global twk_center, twk_normal, twk_offset, twk_startLocal, twk_startWorld, twk_delta, twk_ok
 global twk_held
 global twk_pickRadius           -- 커서에서 이 픽셀 반경 안의 최근접 버텍스만 집음
+global twk_origSel              -- 하이라이트 전 원래 버텍스 선택(놓을 때 복원)
+global twk_showRed              -- 잡은 버텍스를 빨갛게(네이티브 선택색) 표시할지
 if twk_pickRadius == undefined do twk_pickRadius = 40.0
+if twk_showRed == undefined do twk_showRed = true
 
 -- [임베드] TweakMove 후크 소스.
 global twk_cs = "// TweakMove - embedded mouse hook (Ctrl + middle-drag, hover tweak)
@@ -1088,8 +1091,11 @@ fn twk_onStart sender args = (
         twk_normal = normalize ((inverse (viewport.getTM())).row3)
         twk_startWorld = twk_planePt twk_startLocal
         twk_delta = [0,0,0]
+        twk_origSel = polyop.getVertSelection twk_obj      -- 원래 선택 저장(복원용)
         theHold.Begin()
         twk_held = true
+        -- 잡은 버텍스만 임시 선택 -> 버텍스 서브레벨에서 빨갛게 보임(드래그 동안만)
+        if twk_showRed do ( try ( polyop.setVertSelection twk_obj #{twk_vidx} ) catch () )
         twk_ok = true
     ) catch (
         format "tweak: start failed: %\n" (getCurrentException())
@@ -1113,6 +1119,7 @@ fn twk_onEnd sender args = (
     twk_ok = false
     try (
         if twk_held == true do (
+            if twk_showRed do ( try ( polyop.setVertSelection twk_obj twk_origSel ) catch () )  -- 선택 복원(비파괴)
             if (length twk_delta) > 1e-6 then theHold.Accept "Tweak Vertex"
             else theHold.Cancel()
             twk_held = false
