@@ -57,10 +57,12 @@ No companion `.cs` file is needed — it is a single self-contained file.
 - **픽 반경:** `twk_pickRadius` (기본 `40.0` 픽셀) — 커서에서 이 반경 안의 최근접 버텍스만 집습니다.
 - **수식어:** `tweak_start()` 내 `twk_hook.Modifier` (`0` 없음, `1` Ctrl, `2` Alt, `3` Shift — 기본 Ctrl).
 - **빨간 하이라이트:** `twk_showRed` (기본 `true`) — Ctrl 호버 시 최근접 버텍스를 빨갛게 선택 표시하고, 드래그로 이동한 뒤에도 그 선택을 유지합니다. **버텍스 서브오브젝트 레벨**일 때 보입니다. `twk_showRed = false` 로 끌 수 있습니다(호버 하이라이트도 함께 꺼짐).
+- **십자 커서:** `twk_showCross` (기본 `true`) — Ctrl 호버 중 **이동 가능한(반경 내) 버텍스 위에 있을 때만** 마우스 포인터를 십자(Cross)로 바꿉니다. best-effort라 뷰포트 종류/Max 버전에 따라 유지되지 않을 수 있습니다. `twk_showCross = false` 로 끕니다.
 
 - **Pick radius:** `twk_pickRadius` (default `40.0` px) — only grabs the nearest vertex within this radius.
 - **Modifier:** in `tweak_start()` set `twk_hook.Modifier` (`0` none, `1` Ctrl, `2` Alt, `3` Shift — default Ctrl).
 - **Red highlight:** `twk_showRed` (default `true`) — red-selects the nearest vertex on Ctrl-hover and keeps that selection after the drag. Visible while in **Vertex sub-object level**. Set `twk_showRed = false` to disable (also turns off the hover highlight).
+- **Crosshair cursor:** `twk_showCross` (default `true`) — during Ctrl-hover, turns the pointer into a crosshair (Cross) **only when over a grabbable vertex (within the radius)**. Best-effort; may not hold on some viewport types / Max versions. Set `twk_showCross = false` to disable.
 
 ---
 

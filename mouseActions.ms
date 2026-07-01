@@ -851,8 +851,10 @@ global twk_held
 global twk_pickRadius           -- 커서에서 이 픽셀 반경 안의 최근접 버텍스만 집음
 global twk_hoverVidx            -- 현재 하이라이트 중인 버텍스(중복 리드로우 방지)
 global twk_showRed              -- 잡은/가리킨 버텍스를 빨갛게(네이티브 선택색) 표시할지
+global twk_showCross            -- 이동 가능한 버텍스 위에서 커서를 십자로 바꿀지
 if twk_pickRadius == undefined do twk_pickRadius = 40.0
 if twk_showRed == undefined do twk_showRed = true
+if twk_showCross == undefined do twk_showCross = true
 
 -- [임베드] TweakMove 후크 소스.
 global twk_cs = "// TweakMove - embedded mouse hook (Ctrl tweak + Ctrl-hover highlight)
@@ -1102,17 +1104,28 @@ fn twk_highlight obj vidx = (
     )
 )
 
+-- 커서를 십자(이동 가능) / 기본으로 전환. best-effort(뷰포트 종류에 따라 유지 안 될 수 있음).
+--   호버 이벤트는 Max 의 커서 지정 "이후"에 실행되므로 그 위에 덮어써서 십자가 보인다.
+fn twk_cursor cross = (
+    try (
+        local cc = dotNetClass "System.Windows.Forms.Cursor"
+        local cs = dotNetClass "System.Windows.Forms.Cursors"
+        cc.Current = (if cross then cs.Cross else cs.Default)
+    ) catch ()
+)
+
 -- [호버] Ctrl 만 누르고 움직일 때(드래그 아님) 최근접 버텍스를 라이브 하이라이트.
 --   최근접이 "바뀔 때만" 갱신/리드로우 -> 불필요한 리드로우 최소화.
 fn twk_onHover sender args = (
     if twk_ok == true do return false            -- 드래그 중엔 hover 무시
-    if not twk_showRed do return false
+    if not (twk_showRed or twk_showCross) do return false
     try (
         if selection.count != 1 do return false
         local o = selection[1]
         if (classof o.baseObject != Editable_Poly) do return false
         local vidx = twk_pickVert o mouse.pos
-        if vidx != undefined and vidx != twk_hoverVidx do (
+        if twk_showCross do twk_cursor (vidx != undefined)   -- 이동 가능 영역이면 십자 커서
+        if twk_showRed and vidx != undefined and vidx != twk_hoverVidx do (
             twk_highlight o vidx
             redrawViews()
         )
@@ -1138,6 +1151,7 @@ fn twk_onStart sender args = (
         twk_startWorld = twk_planePt twk_startLocal
         twk_delta = [0,0,0]
         twk_highlight twk_obj twk_vidx           -- 잡은 버텍스 빨갛게(드래그 후에도 유지)
+        if twk_showCross do twk_cursor true      -- 드래그 동안 십자 유지
         theHold.Begin()                          -- 이동만 언두에 기록(선택은 undo off 로 분리)
         twk_held = true
         twk_ok = true
@@ -1154,6 +1168,7 @@ fn twk_onMove sender args = (
         local cur = [args.X, args.Y] - twk_offset
         twk_delta = (twk_planePt cur) - twk_startWorld
         polyop.setVert twk_obj twk_vidx (twk_orig + twk_delta) node:twk_obj
+        if twk_showCross do twk_cursor true      -- 드래그 중에도 십자 유지
         redrawViews()
     ) catch ( format "tweak: move failed: %\n" (getCurrentException()) )
 )
