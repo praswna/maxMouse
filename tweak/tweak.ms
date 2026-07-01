@@ -1,15 +1,18 @@
-/*  tweak - "Ctrl + 휠(중간버튼) 드래그 = 커서 밑 버텍스를 선택 없이 바로 끌기" (Editable Poly)
+/*  tweak - "Ctrl 호버로 커서 밑 버텍스 하이라이트 + Ctrl+중간드래그로 이동" (Editable Poly)
     ==========================================================================
-    [개요]  ※ Modo 의 Tweak 처럼 "선택하지 않고" 커서 바로 밑 버텍스를 잡아 끕니다.
-    Editable Poly 가 선택돼 있으면(서브오브젝트 레벨 진입 불필요), CTRL 을 누른 채
-    중간(휠) 버튼으로 드래그하면 커서에서 가장 가까운 버텍스 1개를 화면과 평행한
-    평면을 따라 이동합니다. 떼면 단일 Undo("Tweak Vertex").
-      - 선택을 바꾸지 않습니다(현재 선택/서브레벨 그대로 유지).
-      - 중간버튼 단독은 평소대로 팬. 왼쪽 버튼은 건드리지 않음.
-      - 정확 매칭(Ctrl 단독)이라 Shift / Ctrl+Shift 도구와 안 겹침.
+    [개요]  ※ Modo 의 Tweak 처럼 "선택하지 않고" 커서 바로 밑 버텍스를 다룹니다.
+    Editable Poly 가 선택돼 있으면(서브오브젝트 레벨 진입 불필요):
+      - CTRL 만 누르고 버텍스 근처로 가면 -> 가장 가까운 버텍스가 실시간으로
+        빨갛게 하이라이트(네이티브 선택색)됩니다.
+      - 그 상태로 CTRL+중간(휠)드래그하면 그 버텍스를 화면 평면으로 이동합니다.
+      - 드래그가 끝나도(놓아도) 그 버텍스의 선택은 유지됩니다.
+      - 단일 Undo("Tweak Vertex").
+
+    - 빨간 하이라이트는 버텍스 서브오브젝트 레벨일 때 보입니다.
+    - 중간버튼 단독은 팬. 왼쪽 버튼은 건드리지 않음.
+    - 정확 매칭(Ctrl 단독)이라 Shift / Ctrl+Shift 도구와 안 겹침.
 
     [단일 파일] C# 후크 소스를 이 .ms 안에 임베드 -> 별도 .cs 컴패니언 불필요.
-        (Dropbox 등 임의 경로에서도 동작. getThisScriptFilename 경로 의존 없음.)
     [독립성] C# 네임스페이스: TweakMove / 전역 접두사: twk_ / 콜백 ID: #tweakDrag
     [실행] Scripting > Run Script -> tweak.ms (실행 즉시 시작, "Tweak Toggle" 매크로 등록)
     ==========================================================================
@@ -21,13 +24,15 @@ global twk_obj, twk_vidx, twk_orig
 global twk_center, twk_normal, twk_offset, twk_startLocal, twk_startWorld, twk_delta, twk_ok
 global twk_held                 -- theHold(undo) 를 열어두었는지
 global twk_pickRadius           -- 커서에서 이 픽셀 반경 안의 최근접 버텍스만 집음
-global twk_origSel              -- 하이라이트 전 원래 버텍스 선택(놓을 때 복원)
-global twk_showRed              -- 잡은 버텍스를 빨갛게(네이티브 선택색) 표시할지
+global twk_hoverVidx            -- 현재 하이라이트 중인 버텍스(중복 리드로우 방지)
+global twk_showRed              -- 잡은/가리킨 버텍스를 빨갛게(네이티브 선택색) 표시할지
 if twk_pickRadius == undefined do twk_pickRadius = 40.0
 if twk_showRed == undefined do twk_showRed = true
 
 -- [임베드] TweakMove 후크 소스. C# 코드 안 큰따옴표는 \" 로 이스케이프되어 있다.
-global twk_cs = "// TweakMove - embedded mouse hook (Ctrl + middle-drag, hover tweak)
+--   Ctrl 을 누른 채 마우스를 움직이면(드래그 아님) hover 를 스트리밍해 MAXScript 가
+--   커서 밑 최근접 버텍스를 라이브 하이라이트하게 한다.
+global twk_cs = "// TweakMove - embedded mouse hook (Ctrl tweak + Ctrl-hover highlight)
 using System;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
@@ -46,7 +51,8 @@ namespace TweakMove
         public const int WM_VSTART = 0x8000 + 1;
         public const int WM_VMOVE  = 0x8000 + 2;
         public const int WM_VEND   = 0x8000 + 3;
-        public Action OnVStart, OnVMove, OnVEnd;
+        public const int WM_VHOVER = 0x8000 + 4;
+        public Action OnVStart, OnVMove, OnVEnd, OnVHover;
 
         public MsgSink()
         {
@@ -60,6 +66,7 @@ namespace TweakMove
             if (m.Msg == WM_VSTART) { if (OnVStart != null) OnVStart(); return; }
             if (m.Msg == WM_VMOVE)  { if (OnVMove  != null) OnVMove();  return; }
             if (m.Msg == WM_VEND)   { if (OnVEnd   != null) OnVEnd();   return; }
+            if (m.Msg == WM_VHOVER) { if (OnVHover != null) OnVHover(); return; }
             base.WndProc(ref m);
         }
 
@@ -109,17 +116,18 @@ namespace TweakMove
         private MsgSink _sink;
         private readonly int _ourPid;
 
-        private bool _vDrag = false, _vMovePosted = false;
+        private bool _vDrag = false, _vMovePosted = false, _vHoverPosted = false;
         private int _vStartX, _vStartY, _vCurX, _vCurY;
 
         public event EventHandler<PointEventArgs> VertexDragStart;
         public event EventHandler<PointEventArgs> VertexDragMove;
         public event EventHandler<EventArgs>      VertexDragEnd;
+        public event EventHandler<PointEventArgs> VertexHover;
 
         public TweakHook()
         {
             Armed = false;
-            Modifier = 1;   // Ctrl + middle by default
+            Modifier = 1;
             _ourPid = System.Diagnostics.Process.GetCurrentProcess().Id;
         }
 
@@ -141,6 +149,11 @@ namespace TweakMove
             _sink.OnVEnd = delegate {
                 EventHandler<EventArgs> h = VertexDragEnd;
                 if (h != null) h(this, EventArgs.Empty);
+            };
+            _sink.OnVHover = delegate {
+                _vHoverPosted = false;
+                EventHandler<PointEventArgs> h = VertexHover;
+                if (h != null) h(this, new PointEventArgs(_vCurX, _vCurY));
             };
             _proc = HookCallback;
             _hookId = SetWindowsHookEx(WH_MOUSE_LL, _proc, GetModuleHandle(null), 0);
@@ -181,36 +194,49 @@ namespace TweakMove
             if (nCode >= 0 && _sink != null)
             {
                 int msg = wParam.ToInt32();
-                bool want = (msg == WM_MBUTTONDOWN && Armed)
-                         || (msg == WM_MBUTTONUP   && _vDrag)
-                         || (msg == WM_MOUSEMOVE   && _vDrag);
-                if (want && MaxForeground())
+                if (msg == WM_MBUTTONDOWN)
                 {
-                    MSLLHOOKSTRUCT data = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
-                    int px = data.pt.x, py = data.pt.y;
-                    if (msg == WM_MBUTTONDOWN)
+                    if (Armed && MaxForeground() && ModifierDown())
                     {
-                        if (ModifierDown())
-                        {
-                            _vDrag = true; _vMovePosted = false;
-                            _vStartX = px; _vStartY = py; _vCurX = px; _vCurY = py;
-                            PostMessage(_sink.Handle, MsgSink.WM_VSTART, IntPtr.Zero, IntPtr.Zero);
-                            return (IntPtr)1;
-                        }
+                        MSLLHOOKSTRUCT d = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
+                        _vDrag = true; _vMovePosted = false;
+                        _vStartX = d.pt.x; _vStartY = d.pt.y; _vCurX = d.pt.x; _vCurY = d.pt.y;
+                        PostMessage(_sink.Handle, MsgSink.WM_VSTART, IntPtr.Zero, IntPtr.Zero);
+                        return (IntPtr)1;
                     }
-                    else if (msg == WM_MBUTTONUP)
+                }
+                else if (msg == WM_MBUTTONUP)
+                {
+                    if (_vDrag)
                     {
-                        _vCurX = px; _vCurY = py; _vDrag = false;
+                        MSLLHOOKSTRUCT d = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
+                        _vCurX = d.pt.x; _vCurY = d.pt.y; _vDrag = false;
                         PostMessage(_sink.Handle, MsgSink.WM_VEND, IntPtr.Zero, IntPtr.Zero);
                         return (IntPtr)1;
                     }
-                    else
+                }
+                else if (msg == WM_MOUSEMOVE)
+                {
+                    if (_vDrag)
                     {
-                        _vCurX = px; _vCurY = py;
+                        MSLLHOOKSTRUCT d = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
+                        _vCurX = d.pt.x; _vCurY = d.pt.y;
                         if (!_vMovePosted)
                         {
                             _vMovePosted = true;
                             PostMessage(_sink.Handle, MsgSink.WM_VMOVE, IntPtr.Zero, IntPtr.Zero);
+                        }
+                    }
+                    else if (Armed && ModifierDown() && MaxForeground())
+                    {
+                        // Ctrl held, no drag: stream a hover (never swallow the move) so
+                        // MAXScript can live-highlight the nearest vertex under the cursor.
+                        MSLLHOOKSTRUCT d = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
+                        _vCurX = d.pt.x; _vCurY = d.pt.y;
+                        if (!_vHoverPosted)
+                        {
+                            _vHoverPosted = true;
+                            PostMessage(_sink.Handle, MsgSink.WM_VHOVER, IntPtr.Zero, IntPtr.Zero);
                         }
                     }
                 }
@@ -229,14 +255,11 @@ fn twk_planePt p = (
     else ( local t = (dot (twk_center - r.pos) twk_normal) / denom; r.pos + t * r.dir )
 )
 
--- 커서(뷰포트 좌표 cursorVP) 에서 가장 가까운 버텍스 인덱스(픽셀 반경 내). 없으면 undefined.
---   gw.transPoint 로 각 버텍스의 월드 위치를 활성 뷰포트 화면좌표로 투영해 최근접 탐색.
---   드래그 시작 때 1회만(O(N)) 수행하므로 이동 중 비용 없음.
---   (주의: 화면거리 기준이라 메시 뒤편 버텍스가 더 가까우면 그게 잡힐 수 있음 - 정밀히
---    원하는 버텍스를 가리키면 됨.)
+-- 커서(뷰포트 좌표 cursorVP)에서 가장 가까운 버텍스 인덱스(픽셀 반경 내). 없으면 undefined.
+--   gw.transPoint 로 각 버텍스를 화면좌표로 투영해 최근접 탐색(O(N)).
 fn twk_pickVert obj cursorVP = (
     local nv = polyop.getNumVerts obj
-    gw.setTransform (matrix3 1)                 -- gw 변환을 항등(월드)으로
+    gw.setTransform (matrix3 1)
     local best = undefined
     local bestD = twk_pickRadius * twk_pickRadius
     local cx = cursorVP.x; local cy = cursorVP.y
@@ -249,7 +272,32 @@ fn twk_pickVert obj cursorVP = (
     best
 )
 
--- [드래그 시작] 커서 밑 최근접 버텍스를 집어 원위치/평면을 기록 (선택은 건드리지 않음)
+-- 잡은/가리킨 버텍스를 빨갛게(네이티브 선택). undo off 라 언두 스택 오염 없음.
+fn twk_highlight obj vidx = (
+    if twk_showRed do (
+        undo off ( try ( polyop.setVertSelection obj #{vidx} ) catch () )
+        twk_hoverVidx = vidx
+    )
+)
+
+-- [호버] Ctrl 만 누르고 움직일 때(드래그 아님) 최근접 버텍스를 라이브 하이라이트.
+--   최근접이 "바뀔 때만" 갱신/리드로우 -> 불필요한 리드로우 최소화.
+fn twk_onHover sender args = (
+    if twk_ok == true do return false            -- 드래그 중엔 hover 무시
+    if not twk_showRed do return false
+    try (
+        if selection.count != 1 do return false
+        local o = selection[1]
+        if (classof o.baseObject != Editable_Poly) do return false
+        local vidx = twk_pickVert o mouse.pos
+        if vidx != undefined and vidx != twk_hoverVidx do (
+            twk_highlight o vidx
+            redrawViews()
+        )
+    ) catch ()
+)
+
+-- [드래그 시작] 커서 밑 최근접 버텍스를 집어 원위치/평면을 기록
 fn twk_onStart sender args = (
     twk_ok = false
     if twk_held == true do ( try ( theHold.Cancel() ) catch (); twk_held = false )   -- 잔여 hold 정리
@@ -263,16 +311,14 @@ fn twk_onStart sender args = (
         twk_vidx = twk_pickVert twk_obj twk_startLocal
         if twk_vidx == undefined do return false            -- 반경 내 버텍스 없음 -> 무동작
 
-        twk_orig   = polyop.getVert twk_obj twk_vidx node:twk_obj   -- 월드 원위치
-        twk_center = twk_orig                                       -- 평면은 잡은 버텍스를 통과
-        twk_normal = normalize ((inverse (viewport.getTM())).row3)  -- 시선(화면 평면 법선)
+        twk_orig   = polyop.getVert twk_obj twk_vidx node:twk_obj
+        twk_center = twk_orig
+        twk_normal = normalize ((inverse (viewport.getTM())).row3)
         twk_startWorld = twk_planePt twk_startLocal
         twk_delta = [0,0,0]
-        twk_origSel = polyop.getVertSelection twk_obj      -- 원래 선택 저장(복원용)
-        theHold.Begin()
+        twk_highlight twk_obj twk_vidx           -- 잡은 버텍스 빨갛게(드래그 후에도 유지)
+        theHold.Begin()                          -- 이동만 언두에 기록(선택은 undo off 로 분리)
         twk_held = true
-        -- 잡은 버텍스만 임시 선택 -> 버텍스 서브레벨에서 빨갛게 보임(드래그 동안만)
-        if twk_showRed do ( try ( polyop.setVertSelection twk_obj #{twk_vidx} ) catch () )
         twk_ok = true
     ) catch (
         format "tweak: start failed: %\n" (getCurrentException())
@@ -292,13 +338,12 @@ fn twk_onMove sender args = (
     ) catch ( format "tweak: move failed: %\n" (getCurrentException()) )
 )
 
--- [드래그 끝] 움직였으면 단일 Undo, 아니면 빈 Undo 안 만듦
+-- [드래그 끝] 움직였으면 단일 Undo, 아니면 빈 Undo 안 만듦. 선택은 그대로 유지.
 fn twk_onEnd sender args = (
     if not twk_ok do return false
     twk_ok = false
     try (
         if twk_held == true do (
-            if twk_showRed do ( try ( polyop.setVertSelection twk_obj twk_origSel ) catch () )  -- 선택 복원(비파괴)
             if (length twk_delta) > 1e-6 then theHold.Accept "Tweak Vertex"
             else theHold.Cancel()
             twk_held = false
@@ -357,6 +402,7 @@ fn tweak_start = (
     dotNet.addEventHandler twk_hook "VertexDragStart" twk_onStart
     dotNet.addEventHandler twk_hook "VertexDragMove"  twk_onMove
     dotNet.addEventHandler twk_hook "VertexDragEnd"   twk_onEnd
+    dotNet.addEventHandler twk_hook "VertexHover"     twk_onHover
 
     twk_hook.Start()
 
@@ -368,13 +414,14 @@ fn tweak_start = (
     callbacks.addScript #preSystemShutdown "if (tweak_stop != undefined) do tweak_stop()" id:#tweakDrag
     twk_poll()
 
-    format "tweak: started (Ctrl + middle-drag tweaks the nearest vertex under the cursor).\n"
+    format "tweak: started (Ctrl-hover highlights nearest vertex; Ctrl+middle-drag tweaks it).\n"
     true
 )
 
 fn tweak_stop = (
     callbacks.removeScripts id:#tweakDrag
     if twk_held == true do ( try ( theHold.Cancel() ) catch (); twk_held = false )
+    twk_hoverVidx = undefined
     if twk_hook != undefined do ( try ( twk_hook.Stop() ) catch (); twk_hook = undefined )
     format "tweak: stopped.\n"
 )
@@ -384,7 +431,7 @@ fn tweak_toggle = (
 )
 
 macroScript tweak_Toggle
-    category:"tweakDrag" buttontext:"Tweak" tooltip:"Toggle Ctrl+middle hover tweak (nearest vertex)"
+    category:"tweakDrag" buttontext:"Tweak" tooltip:"Toggle Ctrl-hover + Ctrl+middle vertex tweak"
 ( on execute do ( if (tweak_toggle != undefined) do tweak_toggle() ) )
 
 -- 실행 즉시 시작
