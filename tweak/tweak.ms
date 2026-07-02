@@ -300,16 +300,23 @@ fn twk_highlight obj vidx = (
 )
 
 -- 커서를 십자(이동 가능) / 기본으로 전환. best-effort(뷰포트 종류에 따라 유지 안 될 수 있음).
---   [깜박임 방지] 상태가 "바뀔 때만" 설정한다. 매 이동마다 재설정하면 커서가 깜박인다.
+--   [깜박임/사라짐 방지] 실제 커서가 이미 십자면 재설정하지 않고(깜박임 제거),
+--   Max 가 커서를 되돌려놨으면 다시 십자로(사라짐 방지). 해제는 전환 시 1회만.
 fn twk_cursor cross = (
-    if cross != twk_crossState do (
-        try (
-            local cc = dotNetClass "System.Windows.Forms.Cursor"
-            local cs = dotNetClass "System.Windows.Forms.Cursors"
-            cc.Current = (if cross then cs.Cross else cs.Default)
-        ) catch ()
+    try (
+        local cc = dotNetClass "System.Windows.Forms.Cursor"
+        local cs = dotNetClass "System.Windows.Forms.Cursors"
+        if cross then (
+            -- "우리가 마지막에 뭘 설정했나"가 아니라 "지금 실제 커서"를 핸들 값으로 비교
+            local cur = cc.Current
+            local isCross = (cur != undefined) and \
+                (try (cur.Handle.ToInt64() == cs.Cross.Handle.ToInt64()) catch (false))
+            if not isCross do cc.Current = cs.Cross
+        ) else (
+            if twk_crossState == true do cc.Current = cs.Default   -- 전환 시 1회만 되돌림(이후 Max 가 관리)
+        )
         twk_crossState = cross
-    )
+    ) catch ()
 )
 
 -- [호버] Ctrl 만 누르고 움직일 때(드래그 아님) 최근접 버텍스를 라이브 하이라이트.
@@ -317,10 +324,9 @@ fn twk_cursor cross = (
 fn twk_onHover sender args = (
     if twk_ok == true do return false            -- 드래그 중엔 hover 무시
     if not (twk_showRed or twk_showCross) do return false
-    try (
-        if selection.count != 1 do ( twk_cursor false; return false )
-        local o = selection[1]
-        if (classof o.baseObject != Editable_Poly) do ( twk_cursor false; return false )
+    local o = if selection.count == 1 then selection[1] else undefined
+    if o == undefined or (classof o.baseObject != Editable_Poly) then twk_cursor false
+    else try (
         local vidx = twk_pickVert o mouse.pos
         if twk_showCross do twk_cursor (vidx != undefined)   -- 이동 가능 영역이면 십자 커서
         if twk_showRed and vidx != undefined and vidx != twk_hoverVidx do (
@@ -332,33 +338,37 @@ fn twk_onHover sender args = (
 
 -- [호버 끝] Ctrl 을 떼거나 뷰포트를 벗어나면 십자 커서를 기본으로 되돌림.
 fn twk_onHoverEnd sender args = (
-    if not twk_ok do twk_cursor false
+    if twk_ok != true do (        -- 첫 드래그 전에는 twk_ok 가 undefined ("not undefined" 는 타입 에러)
+        twk_cursor false
+        twk_hoverVidx = undefined -- 클리어: 선택이 바뀐 뒤 같은 버텍스를 재호버해도 다시 하이라이트되게
+    )
 )
 
 -- [드래그 시작] 커서 밑 최근접 버텍스를 집어 원위치/평면을 기록
 fn twk_onStart sender args = (
     twk_ok = false
     if twk_held == true do ( try ( theHold.Cancel() ) catch (); twk_held = false )   -- 잔여 hold 정리
+    -- 검증은 try "밖"에서: MAXScript 는 try 본문 안의 return 을 catch 가 가로채는
+    -- 동작(문서화됨)이 있어, 픽 미스/비대상 클릭마다 가짜 "start failed" 가 찍히지 않게 한다.
+    if selection.count != 1 do return false
+    twk_obj = selection[1]
+    if (classof twk_obj.baseObject != Editable_Poly) do return false
     try (
-        if selection.count != 1 do return false
-        twk_obj = selection[1]
-        if (classof twk_obj.baseObject != Editable_Poly) do return false
-
         twk_offset = [args.X, args.Y] - mouse.pos
         twk_startLocal = [args.X, args.Y] - twk_offset      -- = 다운 시점의 뷰포트 커서 좌표
         twk_vidx = twk_pickVert twk_obj twk_startLocal
-        if twk_vidx == undefined do return false            -- 반경 내 버텍스 없음 -> 무동작
-
-        twk_orig   = polyop.getVert twk_obj twk_vidx node:twk_obj
-        twk_center = twk_orig
-        twk_normal = normalize ((inverse (viewport.getTM())).row3)
-        twk_startWorld = twk_planePt twk_startLocal
-        twk_delta = [0,0,0]
-        twk_highlight twk_obj twk_vidx           -- 잡은 버텍스 빨갛게(드래그 후에도 유지)
-        if twk_showCross do twk_cursor true      -- 드래그 동안 십자 유지
-        theHold.Begin()                          -- 이동만 언두에 기록(선택은 undo off 로 분리)
-        twk_held = true
-        twk_ok = true
+        if twk_vidx != undefined do (                       -- 반경 내 버텍스 없으면 무동작
+            twk_orig   = polyop.getVert twk_obj twk_vidx node:twk_obj
+            twk_center = twk_orig
+            twk_normal = normalize ((inverse (viewport.getTM())).row3)
+            twk_startWorld = twk_planePt twk_startLocal
+            twk_delta = [0,0,0]
+            twk_highlight twk_obj twk_vidx           -- 잡은 버텍스 빨갛게(드래그 후에도 유지)
+            if twk_showCross do twk_cursor true      -- 드래그 동안 십자 유지
+            theHold.Begin()                          -- 이동만 언두에 기록(선택은 undo off 로 분리)
+            twk_held = true
+            twk_ok = true
+        )
     ) catch (
         format "tweak: start failed: %\n" (getCurrentException())
         twk_ok = false
